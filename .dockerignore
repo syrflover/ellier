@@ -1,0 +1,9 @@
+target/
+!target/x86_64-unknown-linux-musl/debug/ellier
+!target/debug/ellier
+!target/x86_64-unknown-linux-musl/release/ellier
+!target/release/ellier
+src/
+migration/
+bin/
+.vscode/
