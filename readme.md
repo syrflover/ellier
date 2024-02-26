@@ -42,5 +42,10 @@ cargo build --release
 ### 옵션
 
 - `--index=<number>`
+
 `channels.json` 파일에 있는 채널 중 한 개의 채널을 지정함.
-순서는 `0`부터 시작하며, 기본 값은 `0`.
+순서는 `0`부터 시작함.
+
+- `--name=<string>`
+
+`channels.json` 파일에 있는 채널 중 한 개의 채널을 지정함.

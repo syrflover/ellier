@@ -143,13 +143,25 @@ async fn run() {
 
     let index = std::env::args()
         .find(|arg| arg.starts_with("--index="))
-        .and_then(|x| x["--index=".len()..].trim().parse::<usize>().ok())
-        .unwrap_or(0);
+        .and_then(|x| x["--index=".len()..].trim().parse::<usize>().ok());
+
+    let name = std::env::args()
+        .find(|arg| arg.starts_with("--name="))
+        .map(|x| x["--name=".len()..].trim().to_owned());
 
     let Channel {
         channel_id,
         channel_name,
-    } = channels.into_iter().nth(index).unwrap();
+    } = if let Some(index) = index {
+        channels.into_iter().nth(index).expect("hasn't channel")
+    } else if let Some(name) = name {
+        channels
+            .into_iter()
+            .find(|x| x.channel_name == name)
+            .expect("hasn't channel")
+    } else {
+        panic!("please set `--index=<number>` or `--name=<string>`");
+    };
 
     tracing::info!("channel_id   = {:?}", channel_id);
     tracing::info!("channel_name = {:?}", channel_name);
