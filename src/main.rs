@@ -16,8 +16,7 @@ use chzzk::{
 };
 use serde::Deserialize;
 use tokio::{
-    fs::{self, File},
-    io::AsyncReadExt,
+    fs,
     signal::{
         self,
         unix::{Signal, SignalKind},
@@ -122,26 +121,25 @@ async fn save_metadata(
     Ok(())
 }
 
-async fn read_auth() -> Option<Auth> {
-    let mut file = File::open("./auth.json").await.ok()?;
-    let mut buf = Vec::new();
-
-    file.read_to_end(&mut buf).await.unwrap();
-
-    Some(serde_json::from_slice(&buf).unwrap())
-}
-
 async fn run() {
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     struct Channel {
         channel_id: String,
         channel_name: String,
     }
 
-    #[derive(Debug, Deserialize)]
+    #[derive(Deserialize)]
     struct Config {
         path: String,
+        auth: Option<Auth>,
+        channels: Vec<Channel>,
     }
+
+    let Config {
+        path,
+        auth,
+        channels,
+    } = serde_json::from_slice::<Config>(&fs::read("./config.json").await.unwrap()).unwrap();
 
     let index = std::env::args()
         .find(|arg| arg.starts_with("--index="))
@@ -151,20 +149,12 @@ async fn run() {
     let Channel {
         channel_id,
         channel_name,
-    } = serde_json::from_slice::<Vec<Channel>>(&fs::read("./channels.json").await.unwrap())
-        .unwrap()
-        .into_iter()
-        .nth(index)
-        .unwrap();
+    } = channels.into_iter().nth(index).unwrap();
 
     tracing::info!("channel_id   = {:?}", channel_id);
     tracing::info!("channel_name = {:?}", channel_name);
 
-    let Config { path } =
-        serde_json::from_slice::<Config>(&fs::read("./config.json").await.unwrap()).unwrap();
-
     let save_dir = PathBuf::from(&path).join(channel_name);
-    let auth = read_auth().await;
 
     let mut sigterm = signal::unix::signal(SignalKind::terminate()).unwrap();
     let mut encoder_process = None::<Child>;
@@ -174,22 +164,19 @@ async fn run() {
         let now = Utc::now();
 
         match encoder_process.as_mut() {
-            Some(encoder) => {
-                // TODO: error handle
-                match encoder.try_wait() {
-                    Ok(Some(exit_code)) => {
-                        tracing::info!("received signal {} from ffmpeg", exit_code);
-                        encoder_process = None;
-                        prev_live = None;
-                    }
-                    Err(err) => {
-                        encoder_process = None;
-                        prev_live = None;
-                        tracing::error!("{err}");
-                    }
-                    _ => {}
+            Some(encoder) => match encoder.try_wait() {
+                Ok(Some(exit_code)) => {
+                    tracing::info!("received signal {} from ffmpeg", exit_code);
+                    encoder_process = None;
+                    prev_live = None;
                 }
-            }
+                Err(err) => {
+                    encoder_process = None;
+                    prev_live = None;
+                    tracing::error!("{err}");
+                }
+                _ => {}
+            },
             None => {
                 let (curr, encoder) =
                     match watch_stream(auth.as_ref(), &save_dir, &channel_id, now).await {

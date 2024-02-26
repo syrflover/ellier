@@ -5,33 +5,28 @@
 ## 설정
 
 ```jsonc
-// auth.json - optional
-// chzzk.naver.com 쿠키에서 가져옴
+// config.json
 {
-    "nid_ses": "",
-    "nid_aut": "",
-    "nid_jkl": ""
-}
-```
+    // 저장할 폴더 경로
+    "path": "",
 
-```jsonc
-// channels.json - required
-[
-    {
-        "channel_id": "",
-        "channel_name": "" // 실제 이름과 상관 없이 임의로 지정
+    // chzzk.naver.com 쿠키에서 가져옴
+    // 인증은 필수 아님
+    "auth": {
+        "nid_ses": "",
+        "nid_aut": "",
+        "nid_jkl": ""
     },
-    {
-        "channel_id": "",
-        "channel_name": "" // 실제 이름과 상관 없이 임의로 지정
-    }
-]
-```
-
-```jsonc
-// config.json - required
-{
-    "path": "" // 저장할 폴더 경로
+    "channels": [
+        {
+            "channel_id": "",
+            "channel_name": "" // 실제 이름과 상관 없이 임의로 지정
+        },
+        {
+            "channel_id": "",
+            "channel_name": "" // 실제 이름과 상관 없이 임의로 지정
+        }
+    ]
 }
 ```
 
