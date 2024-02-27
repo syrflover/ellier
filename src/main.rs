@@ -5,16 +5,19 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use chzzk::{
-    live::{
-        get_live_detail::{self, GetLiveDetail},
-        get_live_status::{self, GetLiveStatus},
-    },
-    model::{LiveDetail, LivePlaybackMedia, LiveStatusType},
+    live::{get_live_detail::GetLiveDetail, get_live_status::GetLiveStatus},
+    model::{LiveDetail, LivePlaybackMedia, LiveStatus, LiveStatusType},
     request::Auth,
 };
-use serde::Deserialize;
+use ellier::{
+    config::{Channel, Config},
+    ffmpeg::{AudioCodec, Ffmpeg, OutputFormat, VideoCodec},
+};
+use serde::Serialize;
+use tap::Tap;
+use time::macros::offset;
 use tokio::{
     fs,
     signal::{
@@ -25,96 +28,142 @@ use tokio::{
 };
 use tracing::Level;
 
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("io: {0}")]
-    Io(#[from] io::Error),
-    #[error("serialize_json: {0}")]
-    SerializeJson(serde_json::Error),
-    #[error("deserialize_json: {0}")]
-    DeserializeJson(serde_json::Error),
+pub struct EncodeStream<'a> {
+    stream_url: &'a str,
+    save_directory: &'a Path,
+    now: DateTime<FixedOffset>,
 
-    #[error("get_live_status: {0}")]
-    GetLiveStatus(#[from] get_live_status::Error),
-    #[error("get_live_detail: {0}")]
-    GetLiveDetail(#[from] get_live_detail::Error),
+    video_codec: VideoCodec,
+    audio_codec: AudioCodec,
+    output_format: OutputFormat,
 }
 
-fn encode_stream(
-    stream_url: &str,
-    save_directory: impl AsRef<Path>,
-    now: DateTime<Utc>,
-) -> io::Result<Child> {
-    let save_file_path = save_directory
-        .as_ref()
-        .join(format!("{}.mp4", now.format("%Y-%m-%d_%H-%M-%S")));
+impl<'a> EncodeStream<'a> {
+    pub fn execute(self) -> io::Result<Child> {
+        let Self {
+            stream_url,
+            save_directory,
+            now,
+            video_codec,
+            audio_codec,
+            output_format,
+        } = self;
 
-    Command::new("ffmpeg")
-        .args(["-i", stream_url, "-c", "copy", "-bsf:a", "aac_adtstoasc"])
-        .arg(save_file_path)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::null())
-        .stderr(Stdio::inherit())
-        .spawn()
-}
+        let save_file_path =
+            save_directory.join(format!("{}.mkv", now.format("%Y-%m-%d_%H-%M-%S")));
 
-async fn get_stream(
-    auth: Option<&Auth>,
-    channel_id: &str,
-) -> Result<Option<(LiveDetail, LivePlaybackMedia)>, Error> {
-    let live_status = GetLiveStatus { channel_id }.send(auth).await?;
-
-    if let LiveStatusType::Open = live_status.status {
-        let live_detail = GetLiveDetail { channel_id }.send(auth).await?;
-
-        if live_detail.inherit.adult && live_detail.inherit.live_playback.is_none() {
-            tracing::warn!("YOU'RE NOT AN ADULT");
-            return Ok(None);
-        }
-
-        let Some(live_playback) = live_detail.inherit.live_playback.as_ref() else {
-            return Ok(None);
-        };
-
-        let stream = live_playback
-            .media
-            .iter()
-            .find(|media| media.media_id == "HLS")
-            .cloned();
-
-        Ok(stream.map(|stream| (live_detail, stream)))
-    } else {
-        Ok(None)
+        Command::new("streamlink")
+            .args([
+                stream_url,
+                "best",
+                "--loglevel",
+                "info",
+                "--ffmpeg-video-transcode",
+                video_codec.as_str(),
+                "--ffmpeg-audio-transcode",
+                audio_codec.as_str(),
+                "--ffmpeg-fout",
+                output_format.as_str(),
+            ])
+            .arg("-o")
+            .arg(save_file_path.as_os_str())
+            .stdin(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .stdout(Stdio::null())
+            .tap(|ffmpeg| tracing::info!("Ffmpeg{:#?}", ffmpeg.get_args()))
+            .spawn()
     }
 }
 
-async fn watch_stream(
-    auth: Option<&Auth>,
-    save_dir: impl AsRef<Path>,
-    channel_id: &str,
-    now: DateTime<Utc>,
-) -> Result<Option<(LiveDetail, Child)>, Error> {
-    let Some((live_detail, stream)) = get_stream(auth, channel_id).await? else {
-        return Ok(None);
-    };
-
-    fs::create_dir_all(&save_dir).await?;
-
-    let encoder = encode_stream(&stream.path, &save_dir, now)?;
-
-    Ok(Some((live_detail, encoder)))
+pub struct GetStream<'a> {
+    auth: Option<&'a Auth>,
+    channel_id: &'a str,
 }
 
-async fn save_metadata(
+impl<'a> GetStream<'a> {
+    pub async fn execute(self) -> ellier::Result<Option<(LiveDetail, LivePlaybackMedia)>> {
+        let Self { auth, channel_id } = self;
+
+        let live_status = GetLiveStatus { channel_id }.send(auth).await?;
+
+        if let LiveStatusType::Open = live_status.status {
+            let live_detail = GetLiveDetail { channel_id }.send(auth).await?;
+
+            if live_detail.inherit.adult && live_detail.inherit.live_playback.is_none() {
+                tracing::warn!("YOU'RE NOT AN ADULT");
+                return Ok(None);
+            }
+
+            let Some(live_playback) = live_detail.inherit.live_playback.as_ref() else {
+                return Ok(None);
+            };
+
+            let stream = live_playback
+                .media
+                .iter()
+                .find(|media| media.media_id == "HLS")
+                .cloned();
+
+            Ok(stream.map(|stream| (live_detail, stream)))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+pub struct WatchStream<'a> {
+    auth: Option<&'a Auth>,
+    save_directory: &'a Path,
+    channel_id: &'a str,
+    now: DateTime<FixedOffset>,
+    ffmpeg: &'a Ffmpeg,
+}
+
+impl<'a> WatchStream<'a> {
+    pub async fn execute(self) -> ellier::Result<Option<(LiveDetail, Child)>> {
+        let Self {
+            auth,
+            save_directory,
+            channel_id,
+            now,
+            ffmpeg:
+                Ffmpeg {
+                    video_codec,
+                    audio_codec,
+                    output_format,
+                },
+        } = self;
+
+        let Some((live_detail, stream)) = GetStream { auth, channel_id }.execute().await? else {
+            return Ok(None);
+        };
+
+        fs::create_dir_all(&save_directory).await?;
+
+        let encoder = EncodeStream {
+            stream_url: &stream.path,
+            save_directory,
+            now,
+            video_codec: *video_codec,
+            audio_codec: *audio_codec,
+            output_format: *output_format,
+        }
+        .execute()?;
+
+        Ok(Some((live_detail, encoder)))
+    }
+}
+
+async fn save_metadata<T: Serialize>(
     save_dir: impl AsRef<Path>,
-    live: &LiveDetail,
-    now: DateTime<Utc>,
-) -> Result<(), Error> {
+    live: &T,
+    now: DateTime<FixedOffset>,
+) -> ellier::Result<()> {
     let save_path = save_dir
         .as_ref()
         .join(format!("{}.json", now.format("%Y-%m-%d_%H-%M-%S")));
 
-    let json = serde_json::to_vec(&live).map_err(Error::SerializeJson)?;
+    let json = serde_json::to_vec(&live).map_err(ellier::Error::SerializeJson)?;
 
     fs::write(save_path, json).await?;
 
@@ -122,23 +171,11 @@ async fn save_metadata(
 }
 
 async fn run() {
-    #[derive(Deserialize)]
-    struct Channel {
-        channel_id: String,
-        channel_name: String,
-    }
-
-    #[derive(Deserialize)]
-    struct Config {
-        path: String,
-        auth: Option<Auth>,
-        channels: Vec<Channel>,
-    }
-
     let Config {
         path,
         auth,
         channels,
+        ffmpeg,
     } = serde_json::from_slice::<Config>(&fs::read("./config.json").await.unwrap()).unwrap();
 
     let index = std::env::args()
@@ -166,51 +203,111 @@ async fn run() {
     tracing::info!("channel_id   = {:?}", channel_id);
     tracing::info!("channel_name = {:?}", channel_name);
 
-    let save_dir = PathBuf::from(&path).join(channel_name);
-
     let mut sigterm = signal::unix::signal(SignalKind::terminate()).unwrap();
+
+    let save_directory = PathBuf::from(&path).join(channel_name);
     let mut encoder_process = None::<Child>;
-    let mut prev_live = None::<LiveDetail>;
+    let mut prev_live = None::<LiveStatus>;
 
     loop {
-        let now = Utc::now();
+        let now = Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
 
         match encoder_process.as_mut() {
             Some(encoder) => match encoder.try_wait() {
                 Ok(Some(exit_code)) => {
-                    tracing::info!("received signal {} from ffmpeg", exit_code);
+                    tracing::info!("ended encode stream: {}", exit_code);
                     encoder_process = None;
                     prev_live = None;
+                    continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
                 Err(err) => {
+                    tracing::error!("{err}");
                     encoder_process = None;
                     prev_live = None;
-                    tracing::error!("{err}");
+                    continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
-                _ => {}
+                Ok(None) => {
+                    fn is_modified(prev: Option<&LiveStatus>, curr: Option<&LiveStatus>) -> bool {
+                        let Some((prev, curr)) = prev.zip(curr) else {
+                            return false;
+                        };
+
+                        let modified_category = [
+                            prev.category_type != curr.category_type,
+                            prev.live_category != curr.live_category,
+                            prev.live_category_value != curr.live_category_value,
+                        ]
+                        .into_iter()
+                        .all(|ne| ne);
+
+                        [
+                            prev.live_title != curr.live_title,
+                            // prev.status != curr.status,
+                            // prev.paid_promotion != curr.paid_promotion,
+                            prev.adult != curr.adult,
+                            modified_category,
+                            // prev.chat_active != curr.chat_active,
+                            // prev.chat_available_group != curr.chat_available_group,
+                            // prev.chat_available_condition != curr.chat_available_condition,
+                        ]
+                        .into_iter()
+                        .any(|ne| ne)
+                    }
+
+                    let curr = GetLiveStatus {
+                        channel_id: &channel_id,
+                    }
+                    .send(&auth)
+                    .await;
+
+                    match curr {
+                        Ok(curr) if is_modified(prev_live.as_ref(), Some(&curr)) => {
+                            match save_metadata(&save_directory, &curr, now).await {
+                                Ok(_) => {
+                                    tracing::info!("modified live status");
+                                    prev_live.replace(curr);
+                                }
+                                Err(err) => {
+                                    tracing::error!("{err}");
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!("save_metadata: {err}");
+                        }
+                        _ => {}
+                    }
+                }
             },
             None => {
-                let (curr, encoder) =
-                    match watch_stream(auth.as_ref(), &save_dir, &channel_id, now).await {
-                        Ok(r) => r.unzip(),
-                        Err(err) => {
-                            tracing::error!("{err}");
-                            sleep(Duration::from_secs(5)).await;
-                            continue;
-                        }
-                    };
+                let (live_detail, encoder) = match (WatchStream {
+                    auth: auth.as_ref(),
+                    save_directory: &save_directory,
+                    channel_id: &channel_id,
+                    now,
+                    ffmpeg: &ffmpeg,
+                })
+                .execute()
+                .await
+                {
+                    Ok(r) => r.unzip(),
+                    Err(err) => {
+                        tracing::error!("{err}");
+                        sleep(Duration::from_secs(5)).await;
+                        continue;
+                    }
+                };
 
                 encoder_process = encoder;
 
-                if prev_live != curr {
-                    if let Some(curr) = curr {
-                        match save_metadata(&save_dir, &curr, now).await {
-                            Ok(_) => {
-                                prev_live.replace(curr);
-                            }
-                            Err(err) => {
-                                tracing::error!("{err}");
-                            }
+                if let Some(live_detail) = live_detail {
+                    match save_metadata(&save_directory, &live_detail, now).await {
+                        Ok(_) => {
+                            tracing::info!("created live status");
+                            prev_live.replace(live_detail.into());
+                        }
+                        Err(err) => {
+                            tracing::error!("save_metadata: {err}");
                         }
                     }
                 }
@@ -220,10 +317,11 @@ async fn run() {
         tokio::select! {
             _ = sleep(Duration::from_secs(5)) => {}
             _ = stop_signal(&mut sigterm) => {
+                tracing::info!("received stop signal");
                 if let Some(mut encoder) = encoder_process.take() {
                     encoder.wait().unwrap();
                 }
-                return ;
+                return;
             }
         }
     }
@@ -242,9 +340,15 @@ async fn main() {
 
     let log_level = get_log_level();
 
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
+        offset!(+09:00:00),
+        time::format_description::well_known::Rfc3339,
+    );
+
     let subscriber = tracing_subscriber::fmt()
         .with_max_level(log_level)
         .with_line_number(true)
+        .with_timer(timer)
         .finish();
 
     tracing::subscriber::set_global_default(subscriber).unwrap();
