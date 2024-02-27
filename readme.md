@@ -8,14 +8,32 @@
 // config.json
 {
     // 저장할 폴더 경로
-    "path": "",
-
+    "path": "./.temp",
     // chzzk.naver.com 쿠키에서 가져옴
-    // 인증은 필수 아님
+    // 필수 아님
     "auth": {
         "nid_ses": "",
         "nid_aut": "",
         "nid_jkl": ""
+    },
+    // ffmpeg 옵션
+    // 필수 아님
+    "ffmpeg": {
+        // - hevc_videotoolbox
+        // - copy
+        "video_codec": "copy",
+        // - aac_at
+        // - copy
+        "audio_codec": "copy",
+        // - matroska
+        // - mpegts
+        // "output_format": "matroska"
+    },
+    // 필수 아님
+    "timezone": {
+        "hours": 9
+        // "minutes": 0,
+        // "seconds": 0
     },
     "channels": [
         {
