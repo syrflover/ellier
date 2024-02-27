@@ -13,7 +13,7 @@ use chzzk::{
 };
 use ellier::{
     config::{Channel, Config},
-    ffmpeg::{AudioCodec, Ffmpeg, OutputFormat, VideoCodec},
+    ffmpeg::{Ffmpeg, OutputFormat, VideoCodec},
 };
 use serde::Serialize;
 use tap::Tap;
@@ -27,25 +27,30 @@ use tokio::{
 };
 use tracing::Level;
 
+pub struct Encoder {
+    streamlink: Child,
+    ffmpeg: Child,
+}
+
 pub struct EncodeStream<'a> {
     stream_url: &'a str,
     save_directory: &'a Path,
     now: DateTime<FixedOffset>,
 
     video_codec: VideoCodec,
-    audio_codec: AudioCodec,
     output_format: OutputFormat,
+    crf: u8,
 }
 
 impl<'a> EncodeStream<'a> {
-    pub fn execute(self) -> io::Result<Child> {
+    pub fn execute(self) -> io::Result<Encoder> {
         let Self {
             stream_url,
             save_directory,
             now,
             video_codec,
-            audio_codec,
             output_format,
+            crf,
         } = self;
 
         let save_file_path = save_directory.join(format!(
@@ -54,26 +59,38 @@ impl<'a> EncodeStream<'a> {
             output_format.as_ext()
         ));
 
-        Command::new("streamlink")
-            .args([
-                stream_url,
-                "best",
-                "--loglevel",
-                "info",
-                "--ffmpeg-video-transcode",
-                video_codec.as_str(),
-                "--ffmpeg-audio-transcode",
-                audio_codec.as_str(),
-                "--ffmpeg-fout",
-                output_format.as_str(),
-            ])
-            .arg("-o")
-            .arg(save_file_path.as_os_str())
+        let mut streamlink = Command::new("streamlink")
+            .args([stream_url, "best", "--loglevel", "info", "--stdout"])
             .stdin(Stdio::inherit())
             .stderr(Stdio::inherit())
+            .stdout(Stdio::piped())
+            .spawn()?;
+
+        let ffmpeg = Command::new("ffmpeg")
+            .args([
+                "-i",
+                "pipe:",
+                "-loglevel",
+                "info",
+                // "-profile:v",
+                // "main",
+                "-c:v",
+                video_codec.as_str(),
+                "-c:a",
+                "copy",
+                "-bsf:a",
+                "aac_adtstoasc",
+            ])
+            .arg("-crf")
+            .arg(crf.to_string())
+            .arg(save_file_path.as_os_str())
+            .stdin(streamlink.stdout.take().unwrap())
             .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
             .tap(|ffmpeg| tracing::info!("Ffmpeg{:#?}", ffmpeg.get_args()))
-            .spawn()
+            .spawn()?;
+
+        Ok(Encoder { streamlink, ffmpeg })
     }
 }
 
@@ -122,7 +139,7 @@ pub struct WatchStream<'a> {
 }
 
 impl<'a> WatchStream<'a> {
-    pub async fn execute(self) -> ellier::Result<Option<(LiveDetail, Child)>> {
+    pub async fn execute(self) -> ellier::Result<Option<(LiveDetail, Encoder)>> {
         let Self {
             auth,
             save_directory,
@@ -131,8 +148,8 @@ impl<'a> WatchStream<'a> {
             ffmpeg:
                 Ffmpeg {
                     video_codec,
-                    audio_codec,
                     output_format,
+                    crf,
                 },
         } = self;
 
@@ -147,8 +164,8 @@ impl<'a> WatchStream<'a> {
             save_directory,
             now,
             video_codec: *video_codec,
-            audio_codec: *audio_codec,
             output_format: *output_format,
+            crf: *crf,
         }
         .execute()?;
 
@@ -228,22 +245,24 @@ async fn run() {
     let mut sigterm = signal::unix::signal(SignalKind::terminate()).unwrap();
 
     let save_directory = PathBuf::from(&path).join(channel_name);
-    let mut encoder_process = None::<Child>;
+    let mut encoder_process = None::<Encoder>;
     let mut prev_live = None::<LiveStatus>;
 
     loop {
         let now = Utc::now().with_timezone(&timezone.into());
 
         match encoder_process.as_mut() {
-            Some(encoder) => match encoder.try_wait() {
+            Some(encoder) => match encoder.streamlink.try_wait() {
                 Ok(Some(exit_code)) => {
-                    tracing::info!("ended encode stream: {}", exit_code);
+                    tracing::info!("ended stream: {}", exit_code);
+                    encoder.ffmpeg.wait().ok();
                     encoder_process = None;
                     prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
                 Err(err) => {
                     tracing::error!("{err}");
+                    encoder.ffmpeg.wait().ok();
                     encoder_process = None;
                     prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
@@ -341,7 +360,8 @@ async fn run() {
             _ = stop_signal(&mut sigterm) => {
                 tracing::info!("received stop signal");
                 if let Some(mut encoder) = encoder_process.take() {
-                    encoder.wait().unwrap();
+                    encoder.streamlink.wait().ok();
+                    encoder.ffmpeg.wait().ok();
                 }
                 return;
             }

@@ -22,12 +22,10 @@
         // - hevc_videotoolbox
         // - copy
         "video_codec": "copy",
-        // - aac_at
-        // - copy
-        "audio_codec": "copy",
         // - matroska
         // - mpegts
-        // "output_format": "matroska"
+        "output_format": "matroska",
+        "crf": 23
     },
     // 필수 아님
     "timezone": {
