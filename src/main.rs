@@ -17,7 +17,6 @@ use ellier::{
 };
 use serde::Serialize;
 use tap::Tap;
-use time::macros::offset;
 use tokio::{
     fs,
     signal::{
@@ -49,8 +48,11 @@ impl<'a> EncodeStream<'a> {
             output_format,
         } = self;
 
-        let save_file_path =
-            save_directory.join(format!("{}.mkv", now.format("%Y-%m-%d_%H-%M-%S")));
+        let save_file_path = save_directory.join(format!(
+            "{}.{}",
+            now.format("%Y-%m-%d_%H-%M-%S"),
+            output_format.as_ext()
+        ));
 
         Command::new("streamlink")
             .args([
@@ -176,7 +178,27 @@ async fn run() {
         auth,
         channels,
         ffmpeg,
+        timezone,
     } = serde_json::from_slice::<Config>(&fs::read("./config.json").await.unwrap()).unwrap();
+
+    //
+
+    let log_level = get_log_level();
+
+    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
+        timezone.into(),
+        time::format_description::well_known::Rfc3339,
+    );
+
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(log_level)
+        .with_line_number(true)
+        .with_timer(timer)
+        .finish();
+
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+
+    //
 
     let index = std::env::args()
         .find(|arg| arg.starts_with("--index="))
@@ -210,7 +232,7 @@ async fn run() {
     let mut prev_live = None::<LiveStatus>;
 
     loop {
-        let now = Utc::now().with_timezone(&FixedOffset::east_opt(9 * 3600).unwrap());
+        let now = Utc::now().with_timezone(&timezone.into());
 
         match encoder_process.as_mut() {
             Some(encoder) => match encoder.try_wait() {
@@ -337,21 +359,6 @@ async fn stop_signal(sigterm: &mut Signal) {
 #[tokio::main]
 async fn main() {
     println!("Hello, world!");
-
-    let log_level = get_log_level();
-
-    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
-        offset!(+09:00:00),
-        time::format_description::well_known::Rfc3339,
-    );
-
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(log_level)
-        .with_line_number(true)
-        .with_timer(timer)
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber).unwrap();
 
     run().await;
 }

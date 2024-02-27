@@ -116,4 +116,11 @@ impl OutputFormat {
             OutputFormat::Mpegts => "mpegts",
         }
     }
+
+    pub fn as_ext(&self) -> &'static str {
+        match self {
+            OutputFormat::Matroska => "mkv",
+            OutputFormat::Mpegts => "ts",
+        }
+    }
 }
