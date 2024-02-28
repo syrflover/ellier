@@ -2,6 +2,12 @@
 
 윈도우 지원 안 함
 
+## 테스트 환경
+
+- macos 14.2.1
+- ffmpeg 6.1.1
+- streamlink 6.6.2
+
 ## 설정
 
 ```jsonc
@@ -15,17 +21,6 @@
         "nid_ses": "",
         "nid_aut": "",
         "nid_jkl": ""
-    },
-    // ffmpeg 옵션
-    // 필수 아님
-    "ffmpeg": {
-        // - hevc_videotoolbox
-        // - copy
-        "video_codec": "copy",
-        // - matroska
-        // - mpegts
-        "output_format": "matroska",
-        "crf": 23
     },
     // 필수 아님
     "timezone": {

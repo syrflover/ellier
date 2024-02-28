@@ -6,6 +6,8 @@ const fn crf() -> u8 {
 
 #[derive(Deserialize)]
 pub struct Ffmpeg {
+    #[serde(default)]
+    pub ffmpeg_binary: String,
     #[serde(default = "VideoCodec::default")]
     pub video_codec: VideoCodec,
     #[serde(default = "AudioCodec::default")]
@@ -21,6 +23,7 @@ impl Default for Ffmpeg {
         #[cfg(target_os = "macos")]
         {
             Self {
+                ffmpeg_binary: String::new(),
                 video_codec: VideoCodec::HevcVideotoolbox,
                 audio_codec: AudioCodec::AacAudiotoolbox,
                 output_format: OutputFormat::Matroska,
@@ -30,6 +33,7 @@ impl Default for Ffmpeg {
         #[cfg(not(target_os = "macos"))]
         {
             Self {
+                ffmpeg_binary: String::new(),
                 video_codec: VideoCodec::Copy,
                 audio_codec: AudioCodec::Copy,
                 output_format: OutputFormat::Matroska,
