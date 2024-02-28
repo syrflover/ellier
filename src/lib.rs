@@ -1,6 +1,7 @@
 pub mod config;
 mod error;
 pub mod ffmpeg;
+pub mod ffprobe;
 
 pub use error::Error;
 

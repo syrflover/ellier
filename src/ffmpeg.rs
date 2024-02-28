@@ -8,8 +8,8 @@ const fn crf() -> u8 {
 pub struct Ffmpeg {
     #[serde(default = "VideoCodec::default")]
     pub video_codec: VideoCodec,
-    // #[serde(default = "AudioCodec::default")]
-    // pub audio_codec: AudioCodec,
+    #[serde(default = "AudioCodec::default")]
+    pub audio_codec: AudioCodec,
     #[serde(default = "OutputFormat::default")]
     pub output_format: OutputFormat,
     #[serde(default = "crf")]
@@ -22,7 +22,7 @@ impl Default for Ffmpeg {
         {
             Self {
                 video_codec: VideoCodec::HevcVideotoolbox,
-                // audio_codec: AudioCodec::Copy,
+                audio_codec: AudioCodec::AacAudiotoolbox,
                 output_format: OutputFormat::Matroska,
                 crf: crf(),
             }
@@ -31,7 +31,7 @@ impl Default for Ffmpeg {
         {
             Self {
                 video_codec: VideoCodec::Copy,
-                // audio_codec: AudioCodec::Copy,
+                audio_codec: AudioCodec::Copy,
                 output_format: OutputFormat::Matroska,
                 crf: crf(),
             }
