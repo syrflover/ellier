@@ -23,6 +23,12 @@
         "nid_jkl": ""
     },
     // 필수 아님
+    "post_process": {
+        "enable": false,
+        "video_codec": "copy",
+        "audio_codec": "copy"
+    },
+    // 필수 아님
     "timezone": {
         "hours": 9
         // "minutes": 0,

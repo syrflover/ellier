@@ -1,11 +1,13 @@
 use serde::Deserialize;
 
-const fn crf() -> u8 {
-    23
+const fn post_process() -> bool {
+    false
 }
 
 #[derive(Deserialize)]
 pub struct Ffmpeg {
+    #[serde(rename = "enable", default = "post_process")]
+    pub post_process: bool,
     #[serde(default)]
     pub ffmpeg_binary: String,
     #[serde(default = "VideoCodec::default")]
@@ -14,8 +16,6 @@ pub struct Ffmpeg {
     pub audio_codec: AudioCodec,
     #[serde(default = "OutputFormat::default")]
     pub output_format: OutputFormat,
-    #[serde(default = "crf")]
-    pub crf: u8,
 }
 
 impl Default for Ffmpeg {
@@ -23,21 +23,21 @@ impl Default for Ffmpeg {
         #[cfg(target_os = "macos")]
         {
             Self {
+                post_process: true,
                 ffmpeg_binary: String::new(),
                 video_codec: VideoCodec::HevcVideotoolbox,
-                audio_codec: AudioCodec::AacAudiotoolbox,
+                audio_codec: AudioCodec::Copy,
                 output_format: OutputFormat::Matroska,
-                crf: crf(),
             }
         }
         #[cfg(not(target_os = "macos"))]
         {
             Self {
+                post_process: true,
                 ffmpeg_binary: String::new(),
                 video_codec: VideoCodec::Copy,
                 audio_codec: AudioCodec::Copy,
                 output_format: OutputFormat::Matroska,
-                crf: crf(),
             }
         }
     }
@@ -86,14 +86,7 @@ pub enum AudioCodec {
 
 impl Default for AudioCodec {
     fn default() -> Self {
-        #[cfg(target_os = "macos")]
-        {
-            AudioCodec::AacAudiotoolbox
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            AudioCodec::Copy
-        }
+        AudioCodec::Copy
     }
 }
 

@@ -2,7 +2,7 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
 use chrono::{DateTime, FixedOffset, Utc};
@@ -13,7 +13,7 @@ use chzzk::{
 };
 use ellier::{
     config::{Channel, Config},
-    ffmpeg::{AudioCodec, Ffmpeg, OutputFormat, VideoCodec},
+    ffmpeg::{AudioCodec, Ffmpeg, VideoCodec},
 };
 use serde::Serialize;
 use tap::Tap;
@@ -21,11 +21,11 @@ use tokio::{fs, signal, time::sleep};
 use tracing::Level;
 
 pub struct Encoder {
-    process: Child,
-    path: PathBuf,
-    started_at: SystemTime,
-    // streamlink: Child,
-    // ffmpeg: Child,
+    // process: Child,
+    streamlink: Child,
+    ffmpeg: Option<Child>,
+    // path: PathBuf,
+    // started_at: SystemTime,
 }
 
 pub struct EncodeStream<'a> {
@@ -34,10 +34,10 @@ pub struct EncodeStream<'a> {
     now: DateTime<FixedOffset>,
 
     ffmpeg_binary: &'a str,
+
+    post_process: bool,
     video_codec: VideoCodec,
     audio_codec: AudioCodec,
-    output_format: OutputFormat,
-    crf: u8,
 }
 
 impl<'a> EncodeStream<'a> {
@@ -46,18 +46,19 @@ impl<'a> EncodeStream<'a> {
             stream_url,
             save_directory,
             now,
+            post_process,
             ffmpeg_binary,
             video_codec,
             audio_codec,
-            output_format, // TODO:
-            crf,
         } = self;
 
         let save_file_path =
             save_directory.join(format!("{}.mkv", now.format("%Y-%m-%d_%H-%M-%S")));
 
-        let streamlink = Command::new("streamlink")
-            .args([
+        let mut streamlink = {
+            let mut streamlink = Command::new("streamlink");
+
+            streamlink.args([
                 stream_url,
                 "best",
                 "--loglevel",
@@ -66,43 +67,58 @@ impl<'a> EncodeStream<'a> {
                 ffmpeg_binary.trim(),
                 "--ffmpeg-copyts",
                 "--ffmpeg-fout",
-                "matroska", // "--stdout"
-            ])
-            .arg("-o")
-            .arg(save_file_path.as_os_str())
-            .stdin(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .stdout(Stdio::null())
-            .tap(|cmd| tracing::info!("{:#?}", cmd.get_args()))
-            .spawn()?;
+                "matroska",
+            ]);
 
-        // let ffmpeg = Command::new("ffmpeg")
-        //     .args([
-        //         "-loglevel",
-        //         "error",
-        //         "-i",
-        //         stream_url,
-        //         "-c",
-        //         "copy",
-        //         "-bsf:a",
-        //         "aac_adtstoasc",
-        //         // "-c:v",
-        //         // video_codec.as_str(),
-        //         // "-c:a",
-        //         // audio_codec.as_str(),
-        //     ])
-        //     .arg("-crf")
-        //     .arg(crf.to_string())
-        //     .arg(save_file_path.as_os_str())
-        //     .stdin(Stdio::inherit())
-        //     .stdout(Stdio::null())
-        //     .stderr(Stdio::inherit())
-        //     .spawn()?;
+            if post_process {
+                streamlink
+                    .arg("--stdout")
+                    .stdin(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .stdout(Stdio::piped());
+            } else {
+                streamlink
+                    .arg("-o")
+                    .arg(save_file_path.as_os_str())
+                    .stdin(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .stdout(Stdio::null());
+            }
+
+            streamlink
+                .tap(|cmd| tracing::info!("Streamlink{:#?}", cmd.get_args()))
+                .spawn()?
+        };
+
+        let ffmpeg = if post_process {
+            Some(
+                Command::new("ffmpeg")
+                    .args([
+                        "-loglevel",
+                        "info",
+                        "-i",
+                        "pipe:",
+                        "-c:v",
+                        video_codec.as_str(),
+                        "-c:a",
+                        audio_codec.as_str(),
+                    ])
+                    .arg(save_file_path.as_os_str())
+                    .stdin(streamlink.stdout.take().unwrap())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::inherit())
+                    .tap(|cmd| tracing::info!("Ffmpeg{:#?}", cmd.get_args()))
+                    .spawn()?,
+            )
+        } else {
+            None
+        };
 
         Ok(Encoder {
-            process: streamlink,
-            path: save_file_path,
-            started_at: SystemTime::now(),
+            streamlink,
+            ffmpeg,
+            // path: save_file_path,
+            // started_at: SystemTime::now(),
         })
     }
 }
@@ -160,11 +176,11 @@ impl<'a> WatchStream<'a> {
             now,
             ffmpeg:
                 Ffmpeg {
+                    post_process,
                     ffmpeg_binary,
                     video_codec,
                     audio_codec,
-                    output_format,
-                    crf,
+                    output_format: _,
                 },
         } = self;
 
@@ -178,11 +194,10 @@ impl<'a> WatchStream<'a> {
             stream_url: &stream.path,
             save_directory,
             now,
+            post_process: *post_process,
             ffmpeg_binary,
             video_codec: *video_codec,
             audio_codec: *audio_codec,
-            output_format: *output_format,
-            crf: *crf,
         }
         .execute()?;
 
@@ -285,11 +300,15 @@ async fn run() {
 
         match encoder.as_mut() {
             Some(Encoder {
-                process,
-                path,
-                started_at,
-            }) => match process.try_wait() {
+                streamlink,
+                ffmpeg,
+                // path,
+                // started_at,
+            }) => match streamlink.try_wait() {
                 Ok(Some(_exit_code)) => {
+                    if let Some(ffmpeg) = ffmpeg.as_mut() {
+                        ffmpeg.try_wait().ok();
+                    }
                     // print_metadata(path, &started_at).await;
                     tracing::info!("ended stream");
                     encoder = None;
@@ -297,6 +316,9 @@ async fn run() {
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
                 Err(err) => {
+                    if let Some(ffmpeg) = ffmpeg.as_mut() {
+                        ffmpeg.try_wait().ok();
+                    }
                     // print_metadata(path, &started_at).await;
                     tracing::error!("{err}");
                     encoder = None;
@@ -304,13 +326,13 @@ async fn run() {
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
                 Ok(None) => {
-                    fn is_modified(prev: Option<&LiveStatus>, curr: Option<&LiveStatus>) -> bool {
-                        let Some((prev, curr)) = prev.zip(curr) else {
+                    fn is_modified(prev: Option<&LiveStatus>, curr: &LiveStatus) -> bool {
+                        let Some((prev, curr)) = prev.zip(Some(curr)) else {
                             return false;
                         };
 
                         let modified_category = [
-                            prev.category_type != curr.category_type,
+                            // prev.category_type != curr.category_type,
                             prev.live_category != curr.live_category,
                             prev.live_category_value != curr.live_category_value,
                         ]
@@ -338,7 +360,7 @@ async fn run() {
                     .await;
 
                     match curr {
-                        Ok(curr) if is_modified(prev_live.as_ref(), Some(&curr)) => {
+                        Ok(curr) if is_modified(prev_live.as_ref(), &curr) => {
                             match save_metadata(&save_directory, &curr, now).await {
                                 Ok(_) => {
                                     tracing::info!("modified live status");
@@ -396,10 +418,18 @@ async fn run() {
         tokio::select! {
             _ = sleep(Duration::from_secs(5)) => {}
             _ = stop_signal(#[cfg(unix)] &mut sigterm, #[cfg(target_os = "windows")] &mut ctrl_c) => {
-                if let Some(Encoder { mut process, path, started_at }) = encoder.take() {
+                if let Some(Encoder {
+                    mut streamlink,
+                    mut ffmpeg,
+                    // path,
+                    // started_at
+                 }) = encoder.take() {
                     // print_metadata(path, &started_at).await;
                     tracing::info!("received stop signal");
-                    process.wait().ok();
+                    streamlink.wait().ok();
+                    if let Some(ffmpeg) = ffmpeg.as_mut() {
+                        ffmpeg.try_wait().ok();
+                    }
                 }
                 return;
             }
