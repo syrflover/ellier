@@ -24,7 +24,7 @@ serde_qs = "0.12"
 mime = "0.3"
 bytes = "1.5"
 nix = { version = "0.28", features = ["signal"] }
-chzzk = { git = "https://github.com/syrflover/chzzk-rs", rev = "c3336bf" }
+chzzk = { git = "https://github.com/syrflover/chzzk-rs", rev = "489f6d1" }
 chrono = "0.4"
 time = { version = "0.3", features = ["local-offset", "macros"] }
 tap = "1.0"
