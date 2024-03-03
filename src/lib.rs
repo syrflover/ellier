@@ -2,6 +2,7 @@ pub mod config;
 mod error;
 pub mod ffmpeg;
 pub mod ffprobe;
+pub mod time;
 
 pub use error::Error;
 

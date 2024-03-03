@@ -100,3 +100,4 @@ auth.json
 channels.json
 config.json
 a.json
+.env

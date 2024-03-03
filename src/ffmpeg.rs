@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use serde::Deserialize;
 
 const fn post_process() -> bool {
@@ -14,8 +16,8 @@ pub struct Ffmpeg {
     pub video_codec: VideoCodec,
     #[serde(default = "AudioCodec::default")]
     pub audio_codec: AudioCodec,
-    #[serde(default = "OutputFormat::default")]
-    pub output_format: OutputFormat,
+    // #[serde(default = "OutputFormat::default")]
+    // pub output_format: OutputFormat,
 }
 
 impl Default for Ffmpeg {
@@ -27,7 +29,7 @@ impl Default for Ffmpeg {
                 ffmpeg_binary: String::new(),
                 video_codec: VideoCodec::HevcVideotoolbox,
                 audio_codec: AudioCodec::Copy,
-                output_format: OutputFormat::Matroska,
+                // output_format: OutputFormat::Matroska,
             }
         }
         #[cfg(not(target_os = "macos"))]
@@ -37,7 +39,7 @@ impl Default for Ffmpeg {
                 ffmpeg_binary: String::new(),
                 video_codec: VideoCodec::Copy,
                 audio_codec: AudioCodec::Copy,
-                output_format: OutputFormat::Matroska,
+                // output_format: OutputFormat::Matroska,
             }
         }
     }
@@ -75,6 +77,21 @@ impl VideoCodec {
     }
 }
 
+impl FromStr for VideoCodec {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let r = match s {
+            #[cfg(target_os = "macos")]
+            "hevc_videotoolbox" => VideoCodec::HevcVideotoolbox,
+            "copy" => VideoCodec::Copy,
+            _ => return Err(()),
+        };
+
+        Ok(r)
+    }
+}
+
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub enum AudioCodec {
     #[cfg(target_os = "macos")]
@@ -97,6 +114,21 @@ impl AudioCodec {
             AudioCodec::AacAudiotoolbox => "aac_at",
             AudioCodec::Copy => "copy",
         }
+    }
+}
+
+impl FromStr for AudioCodec {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let r = match s {
+            #[cfg(target_os = "macos")]
+            "aac_at" => AudioCodec::AacAudiotoolbox,
+            "copy" => AudioCodec::Copy,
+            _ => return Err(()),
+        };
+
+        Ok(r)
     }
 }
 

@@ -1,6 +1,6 @@
 [package]
 name = "ellier"
-version = "0.1.0"
+version = "0.1.0-alpha1"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -24,10 +24,14 @@ serde_qs = "0.12"
 mime = "0.3"
 bytes = "1.5"
 nix = { version = "0.28", features = ["signal"] }
-chzzk = { git = "https://github.com/syrflover/chzzk-rs", rev = "4c3347d" }
+chzzk = { git = "https://github.com/syrflover/chzzk-rs", rev = "c3336bf" }
 chrono = "0.4"
 time = { version = "0.3", features = ["local-offset", "macros"] }
 tap = "1.0"
+dotenv = "0.15"
 
 # serde_path = { path = "../serde_path" }
 # chzzk = { path = "../chzzk" }
+
+[target.'cfg(target_env = "musl")'.dependencies]
+openssl = { version = "0.10", features = ["vendored"] }

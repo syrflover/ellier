@@ -2,18 +2,19 @@ use std::{
     io,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use chrono::{DateTime, FixedOffset, Utc};
 use chzzk::{
     live::{get_live_detail::GetLiveDetail, get_live_status::GetLiveStatus},
-    model::{LiveDetail, LivePlaybackMedia, LiveStatus, LiveStatusType},
+    model::{Live, LiveDetail, LivePlaybackMedia, LiveStatus, LiveStatusType, PartialChannel},
     request::Auth,
 };
 use ellier::{
-    config::{Channel, Config},
+    config::{Channel, Config, Timezone},
     ffmpeg::{AudioCodec, Ffmpeg, VideoCodec},
+    time::Time,
 };
 use serde::Serialize;
 use tap::Tap;
@@ -25,13 +26,14 @@ pub struct Encoder {
     streamlink: Child,
     ffmpeg: Option<Child>,
     // path: PathBuf,
-    // started_at: SystemTime,
+    started_at: DateTime<FixedOffset>,
+    time: Instant,
 }
 
 pub struct EncodeStream<'a> {
     stream_url: &'a str,
     save_directory: &'a Path,
-    now: DateTime<FixedOffset>,
+    timezone: Timezone,
 
     ffmpeg_binary: &'a str,
 
@@ -45,15 +47,21 @@ impl<'a> EncodeStream<'a> {
         let Self {
             stream_url,
             save_directory,
-            now,
+            timezone,
             post_process,
             ffmpeg_binary,
             video_codec,
             audio_codec,
         } = self;
 
-        let save_file_path =
-            save_directory.join(format!("{}.mkv", now.format("%Y-%m-%d_%H-%M-%S")));
+        let started_at = Utc::now().with_timezone(&timezone.into());
+
+        let save_directory =
+            save_directory.join(started_at.format("%Y-%m-%d_%H-%M-%S").to_string());
+
+        std::fs::create_dir_all(&save_directory)?;
+
+        let save_file_path = save_directory.join("index.mkv");
 
         let mut streamlink = {
             let mut streamlink = Command::new("streamlink");
@@ -118,7 +126,8 @@ impl<'a> EncodeStream<'a> {
             streamlink,
             ffmpeg,
             // path: save_file_path,
-            // started_at: SystemTime::now(),
+            started_at,
+            time: Instant::now(),
         })
     }
 }
@@ -162,8 +171,8 @@ impl<'a> GetStream<'a> {
 pub struct WatchStream<'a> {
     auth: Option<&'a Auth>,
     save_directory: &'a Path,
+    timezone: Timezone,
     channel_id: &'a str,
-    now: DateTime<FixedOffset>,
     ffmpeg: &'a Ffmpeg,
 }
 
@@ -172,15 +181,14 @@ impl<'a> WatchStream<'a> {
         let Self {
             auth,
             save_directory,
+            timezone,
             channel_id,
-            now,
             ffmpeg:
                 Ffmpeg {
                     post_process,
                     ffmpeg_binary,
                     video_codec,
                     audio_codec,
-                    output_format: _,
                 },
         } = self;
 
@@ -193,7 +201,7 @@ impl<'a> WatchStream<'a> {
         let encoder = EncodeStream {
             stream_url: &stream.path,
             save_directory,
-            now,
+            timezone,
             post_process: *post_process,
             ffmpeg_binary,
             video_codec: *video_codec,
@@ -208,15 +216,20 @@ impl<'a> WatchStream<'a> {
 async fn save_metadata<T: Serialize>(
     save_dir: impl AsRef<Path>,
     live: &T,
-    now: DateTime<FixedOffset>,
+    started_at: &DateTime<FixedOffset>,
+    time: &Time,
 ) -> ellier::Result<()> {
     let save_path = save_dir
         .as_ref()
-        .join(format!("{}.json", now.format("%Y-%m-%d_%H-%M-%S")));
+        .join(started_at.format("%Y-%m-%d_%H-%M-%S").to_string());
 
     let json = serde_json::to_vec(&live).map_err(ellier::Error::SerializeJson)?;
 
-    fs::write(save_path, json).await?;
+    fs::write(
+        save_path.join(format!("{}.json", time.to_readable("-"))),
+        json,
+    )
+    .await?;
 
     Ok(())
 }
@@ -232,13 +245,30 @@ fn get_ffmpeg_binary() -> String {
 }
 
 async fn run() {
+    #[cfg(debug_assertions)]
+    {
+        dotenv::dotenv().ok();
+    }
+
+    let index = std::env::args()
+        .find(|arg| arg.starts_with("--index="))
+        .and_then(|x| x["--index=".len()..].trim().parse::<usize>().ok());
+
+    let name = std::env::args()
+        .find(|arg| arg.starts_with("--name="))
+        .map(|x| x["--name=".len()..].trim().to_owned());
+
     let Config {
         path,
         auth,
         channels,
         mut ffmpeg,
         timezone,
-    } = serde_json::from_slice::<Config>(&fs::read("./config.json").await.unwrap()).unwrap();
+    } = if index.is_some() || name.is_some() {
+        Config::from_file().unwrap()
+    } else {
+        Config::from_env().unwrap()
+    };
 
     //
 
@@ -259,14 +289,6 @@ async fn run() {
 
     //
 
-    let index = std::env::args()
-        .find(|arg| arg.starts_with("--index="))
-        .and_then(|x| x["--index=".len()..].trim().parse::<usize>().ok());
-
-    let name = std::env::args()
-        .find(|arg| arg.starts_with("--name="))
-        .map(|x| x["--name=".len()..].trim().to_owned());
-
     let Channel {
         channel_id,
         channel_name,
@@ -278,11 +300,33 @@ async fn run() {
             .find(|x| x.channel_name == name)
             .expect("hasn't channel")
     } else {
-        panic!("please set `--index=<number>` or `--name=<string>`");
+        channels.into_iter().next().expect("please set channel")
     };
 
+    let LiveDetail {
+        inherit:
+            Live {
+                channel:
+                    PartialChannel {
+                        channel_name: display_channel_name,
+                        ..
+                    },
+                ..
+            },
+        ..
+    } = (GetLiveDetail {
+        channel_id: &channel_id,
+    })
+    .send(&auth)
+    .await
+    .unwrap();
+
     tracing::info!("channel_id   = {:?}", channel_id);
-    tracing::info!("channel_name = {:?}", channel_name);
+    tracing::info!(
+        "channel_name = {:?} / {:?}",
+        channel_name,
+        display_channel_name
+    );
 
     ffmpeg.ffmpeg_binary = get_ffmpeg_binary();
 
@@ -296,14 +340,13 @@ async fn run() {
     let mut prev_live = None::<LiveStatus>;
 
     loop {
-        let now = Utc::now().with_timezone(&timezone.into());
-
         match encoder.as_mut() {
             Some(Encoder {
                 streamlink,
                 ffmpeg,
                 // path,
-                // started_at,
+                started_at,
+                time,
             }) => match streamlink.try_wait() {
                 Ok(Some(_exit_code)) => {
                     if let Some(ffmpeg) = ffmpeg.as_mut() {
@@ -358,12 +401,18 @@ async fn run() {
                     }
                     .send(&auth)
                     .await;
+                    let time = Time::from(time.elapsed());
 
                     match curr {
                         Ok(curr) if is_modified(prev_live.as_ref(), &curr) => {
-                            match save_metadata(&save_directory, &curr, now).await {
+                            match save_metadata(&save_directory, &curr, started_at, &time).await {
                                 Ok(_) => {
-                                    tracing::info!("modified live status");
+                                    println!(
+                                        "{} - {:?} Playing {}",
+                                        time.to_readable(":"),
+                                        curr.live_title,
+                                        curr.live_category.as_deref().unwrap_or("unknown")
+                                    );
                                     prev_live.replace(curr);
                                 }
                                 Err(err) => {
@@ -384,8 +433,8 @@ async fn run() {
                 let (live_detail, new_encoder) = match (WatchStream {
                     auth: auth.as_ref(),
                     save_directory: &save_directory,
+                    timezone,
                     channel_id: &channel_id,
-                    now,
                     ffmpeg: &ffmpeg,
                 })
                 .execute()
@@ -401,10 +450,29 @@ async fn run() {
 
                 encoder = new_encoder;
 
-                if let Some(live_detail) = live_detail {
-                    match save_metadata(&save_directory, &live_detail, now).await {
+                let time = Time(0, 0, 0);
+
+                if let Some((live_detail, encoder)) = live_detail.zip(encoder.as_ref()) {
+                    let LiveDetail {
+                        inherit:
+                            Live {
+                                live_title,
+                                live_category,
+                                ..
+                            },
+                        ..
+                    } = &live_detail;
+
+                    match save_metadata(&save_directory, &live_detail, &encoder.started_at, &time)
+                        .await
+                    {
                         Ok(_) => {
-                            tracing::info!("created live status");
+                            println!(
+                                "{} - {:?} Playing {}",
+                                time.to_readable(":"),
+                                live_title,
+                                live_category.as_deref().unwrap_or("unknown")
+                            );
                             prev_live.replace(live_detail.into());
                         }
                         Err(err) => {
@@ -422,8 +490,10 @@ async fn run() {
                     mut streamlink,
                     mut ffmpeg,
                     // path,
-                    // started_at
+                    started_at: _,
+                    time
                  }) = encoder.take() {
+                    println!("{}", Time::from(time.elapsed()).to_readable(":"));
                     // print_metadata(path, &started_at).await;
                     tracing::info!("received stop signal");
                     streamlink.wait().ok();
@@ -476,6 +546,9 @@ async fn run() {
 //         );
 //     }
 // }
+
+// TODO: stream 끝나면 영상 메타데이터에 chapter 정보 넣기
+// - 특정 시간 안에 같은 제목 또는 카테고리는 스킵
 
 async fn stop_signal(
     #[cfg(unix)] sigterm: &mut signal::unix::Signal,
