@@ -19,7 +19,6 @@ use ellier::{
 use serde::Serialize;
 use tap::Tap;
 use tokio::{fs, signal, time::sleep};
-use tracing::Level;
 
 pub struct Encoder {
     // process: Child,
@@ -94,7 +93,7 @@ impl<'a> EncodeStream<'a> {
             }
 
             streamlink
-                .tap(|cmd| tracing::info!("Streamlink{:#?}", cmd.get_args()))
+                .tap(|cmd| println!("Streamlink{:#?}", cmd.get_args()))
                 .spawn()?
         };
 
@@ -115,7 +114,7 @@ impl<'a> EncodeStream<'a> {
                     .stdin(streamlink.stdout.take().unwrap())
                     .stdout(Stdio::null())
                     .stderr(Stdio::inherit())
-                    .tap(|cmd| tracing::info!("Ffmpeg{:#?}", cmd.get_args()))
+                    .tap(|cmd| println!("Ffmpeg{:#?}", cmd.get_args()))
                     .spawn()?,
             )
         } else {
@@ -147,7 +146,7 @@ impl<'a> GetStream<'a> {
             let live_detail = GetLiveDetail { channel_id }.send(auth).await?;
 
             if live_detail.inherit.adult && live_detail.inherit.live_playback.is_none() {
-                tracing::warn!("YOU'RE NOT AN ADULT");
+                eprintln!("YOU'RE NOT AN ADULT");
                 return Ok(None);
             }
 
@@ -270,25 +269,6 @@ async fn run() {
         Config::from_env().unwrap()
     };
 
-    //
-
-    let log_level = get_log_level();
-
-    let timer = tracing_subscriber::fmt::time::OffsetTime::new(
-        timezone.into(),
-        time::format_description::well_known::Rfc3339,
-    );
-
-    let subscriber = tracing_subscriber::fmt()
-        .with_max_level(log_level)
-        .with_line_number(true)
-        .with_timer(timer)
-        .finish();
-
-    tracing::subscriber::set_global_default(subscriber).unwrap();
-
-    //
-
     let Channel {
         channel_id,
         channel_name,
@@ -321,11 +301,10 @@ async fn run() {
     .await
     .unwrap();
 
-    tracing::info!("channel_id   = {:?}", channel_id);
-    tracing::info!(
+    println!("channel_id   = {:?}", channel_id);
+    println!(
         "channel_name = {:?} / {:?}",
-        channel_name,
-        display_channel_name
+        channel_name, display_channel_name
     );
 
     ffmpeg.ffmpeg_binary = get_ffmpeg_binary();
@@ -353,7 +332,7 @@ async fn run() {
                         ffmpeg.try_wait().ok();
                     }
                     // print_metadata(path, &started_at).await;
-                    tracing::info!("ended stream");
+                    println!("closed live stream");
                     encoder = None;
                     prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
@@ -363,7 +342,7 @@ async fn run() {
                         ffmpeg.try_wait().ok();
                     }
                     // print_metadata(path, &started_at).await;
-                    tracing::error!("{err}");
+                    eprintln!("{err}");
                     encoder = None;
                     prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
@@ -416,12 +395,12 @@ async fn run() {
                                     prev_live.replace(curr);
                                 }
                                 Err(err) => {
-                                    tracing::error!("{err}");
+                                    eprintln!("{err}");
                                 }
                             }
                         }
                         Err(err) => {
-                            tracing::error!("save_metadata: {err}");
+                            eprintln!("{err}");
                         }
                         _ => {}
                     }
@@ -442,7 +421,7 @@ async fn run() {
                 {
                     Ok(r) => r.unzip(),
                     Err(err) => {
-                        tracing::error!("{err}");
+                        eprintln!("{err}");
                         sleep(Duration::from_secs(5)).await;
                         continue;
                     }
@@ -476,7 +455,7 @@ async fn run() {
                             prev_live.replace(live_detail.into());
                         }
                         Err(err) => {
-                            tracing::error!("save_metadata: {err}");
+                            eprintln!("{err}");
                         }
                     }
                 }
@@ -493,9 +472,9 @@ async fn run() {
                     started_at: _,
                     time
                  }) = encoder.take() {
-                    println!("{}", Time::from(time.elapsed()).to_readable(":"));
+                    println!("{} - received stop signal", Time::from(time.elapsed()).to_readable(":"));
                     // print_metadata(path, &started_at).await;
-                    tracing::info!("received stop signal");
+
                     streamlink.wait().ok();
                     if let Some(ffmpeg) = ffmpeg.as_mut() {
                         ffmpeg.try_wait().ok();
@@ -568,21 +547,4 @@ async fn main() {
     println!("Hello, world!");
 
     run().await;
-}
-
-fn get_log_level() -> Level {
-    let log_level = std::env::var("LOG_LEVEL").unwrap_or("info".to_string());
-
-    match log_level.as_str() {
-        "error" => Level::ERROR,
-        "warn" => Level::WARN,
-        "info" => Level::INFO,
-        "debug" => Level::DEBUG,
-        "trace" => Level::TRACE,
-        _ => {
-            println!("invalid LOG_LEVEL, set Level::INFO");
-
-            Level::INFO
-        }
-    }
 }
