@@ -28,8 +28,10 @@ impl From<&Duration> for Time {
 }
 
 impl Time {
-    pub fn to_unknown_readable(separator: &str) -> String {
-        ["??", "??", "??"].join(separator)
+    pub fn as_secs(&self) -> u64 {
+        let Time(h, m, s) = *self;
+
+        (h * 3600) + (m * 60) + s
     }
 
     pub fn to_readable(&self, separator: &str) -> String {

@@ -24,7 +24,7 @@ pub struct Encoder {
     // process: Child,
     streamlink: Child,
     ffmpeg: Option<Child>,
-    // path: PathBuf,
+    directory: PathBuf,
     started_at: DateTime<FixedOffset>,
     time: Instant,
 }
@@ -124,7 +124,7 @@ impl<'a> EncodeStream<'a> {
         Ok(Encoder {
             streamlink,
             ffmpeg,
-            // path: save_file_path,
+            directory: save_directory,
             started_at,
             time: Instant::now(),
         })
@@ -323,16 +323,31 @@ async fn run() {
             Some(Encoder {
                 streamlink,
                 ffmpeg,
-                // path,
+                directory,
                 started_at,
                 time,
             }) => match streamlink.try_wait() {
                 Ok(Some(_exit_code)) => {
+                    let time = Time::from(time.elapsed());
                     if let Some(ffmpeg) = ffmpeg.as_mut() {
                         ffmpeg.try_wait().ok();
                     }
                     // print_metadata(path, &started_at).await;
-                    println!("closed live stream");
+
+                    if time.as_secs() >= 10 {
+                        println!("{} - closed live stream", time.to_readable(":"));
+                    } else {
+                        match fs::remove_dir_all(directory).await {
+                            Ok(_) => {
+                                println!(
+                                    "{} - removed this live stream, because duration less than 10 secs",
+                                    time.to_readable(":")
+                                );
+                            }
+                            Err(err) => eprintln!("remove_dir_all: {err}"),
+                        }
+                    }
+
                     encoder = None;
                     prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
@@ -387,7 +402,7 @@ async fn run() {
                             match save_metadata(&save_directory, &curr, started_at, &time).await {
                                 Ok(_) => {
                                     println!(
-                                        "{} - {:?} Playing {}",
+                                        "{} - {:?} Playing {} | ",
                                         time.to_readable(":"),
                                         curr.live_title,
                                         curr.live_category.as_deref().unwrap_or("unknown")
@@ -468,11 +483,12 @@ async fn run() {
                 if let Some(Encoder {
                     mut streamlink,
                     mut ffmpeg,
-                    // path,
+                    directory: _,
                     started_at: _,
                     time
                  }) = encoder.take() {
-                    println!("{} - received stop signal", Time::from(time.elapsed()).to_readable(":"));
+                    let time = Time::from(time.elapsed());
+                    println!("{} - received stop signal", time.to_readable(":"));
                     // print_metadata(path, &started_at).await;
 
                     streamlink.wait().ok();
