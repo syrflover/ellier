@@ -1,6 +1,6 @@
 [package]
 name = "ellier"
-version = "0.1.0-alpha1"
+version = "0.1.0-alpha2"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -24,7 +24,6 @@ bytes = "1.5"
 nix = { version = "0.28", features = ["signal"] }
 chzzk = { git = "https://github.com/syrflover/chzzk-rs", rev = "489f6d1" }
 chrono = "0.4"
-time = { version = "0.3", features = ["local-offset", "macros"] }
 tap = "1.0"
 dotenv = "0.15"
 

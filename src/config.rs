@@ -35,17 +35,17 @@ impl Default for Timezone {
     }
 }
 
-impl From<Timezone> for time::UtcOffset {
-    fn from(
-        Timezone {
-            hours,
-            minutes,
-            seconds,
-        }: Timezone,
-    ) -> Self {
-        time::UtcOffset::from_hms(hours, minutes, seconds).unwrap()
-    }
-}
+// impl From<Timezone> for time::UtcOffset {
+//     fn from(
+//         Timezone {
+//             hours,
+//             minutes,
+//             seconds,
+//         }: Timezone,
+//     ) -> Self {
+//         time::UtcOffset::from_hms(hours, minutes, seconds).unwrap()
+//     }
+// }
 
 impl From<Timezone> for chrono::FixedOffset {
     fn from(
@@ -116,18 +116,18 @@ impl Config {
     }
 }
 
-fn env<T>(key: &str) -> T
-where
-    T: FromStr,
-    <T as FromStr>::Err: Debug,
-{
-    let var = match env::var(key) {
-        Ok(r) => r,
-        Err(_) => panic!("not set {key}"),
-    };
+// fn env<T>(key: &str) -> T
+// where
+//     T: FromStr,
+//     <T as FromStr>::Err: Debug,
+// {
+//     let var = match env::var(key) {
+//         Ok(r) => r,
+//         Err(_) => panic!("not set {key}"),
+//     };
 
-    var.parse().expect("Please set dotenv to valid value")
-}
+//     var.parse().expect("Please set dotenv to valid value")
+// }
 
 fn env_opt<T>(key: &str) -> Option<T>
 where
