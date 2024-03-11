@@ -3,7 +3,17 @@ entries:
   erish:
   - apiVersion: v2
     appVersion: 1.16.0
-    created: "2024-03-11T22:56:12.402218+09:00"
+    created: "2024-03-11T23:08:10.711782+09:00"
+    description: A Helm chart for Kubernetes
+    digest: f0f79a663bec11ffcfc243ad5d14afa800a5adc5d599570c3ffe1c7e5373e7b5
+    name: erish
+    type: application
+    urls:
+    - erish-0.1.3.tgz
+    version: 0.1.3
+  - apiVersion: v2
+    appVersion: 1.16.0
+    created: "2024-03-11T23:08:10.711586+09:00"
     description: A Helm chart for Kubernetes
     digest: 8aa6495df92b1586a4b91a76fca4dd082129916b85f357ea69ccc66dc8af8694
     name: erish
@@ -13,7 +23,7 @@ entries:
     version: 0.1.2
   - apiVersion: v2
     appVersion: 1.16.0
-    created: "2024-03-11T22:56:12.402021+09:00"
+    created: "2024-03-11T23:08:10.711374+09:00"
     description: A Helm chart for Kubernetes
     digest: 91911aec25ee4edcbd3b226c517be6151466c2a7f32c021ac5060614a3016cb2
     name: erish
@@ -23,7 +33,7 @@ entries:
     version: 0.1.1
   - apiVersion: v2
     appVersion: 1.16.0
-    created: "2024-03-11T22:56:12.401804+09:00"
+    created: "2024-03-11T23:08:10.711151+09:00"
     description: A Helm chart for Kubernetes
     digest: 03da92b3a582c46e867a23d64b4336eb109c065bc677b7801f221583f438e7cd
     name: erish
@@ -31,4 +41,4 @@ entries:
     urls:
     - erish-0.1.0.tgz
     version: 0.1.0
-generated: "2024-03-11T22:56:12.401474+09:00"
+generated: "2024-03-11T23:08:10.710675+09:00"
