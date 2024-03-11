@@ -1,0 +1,38 @@
+{{- /**/ -}}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ template "erish.encoder.sc" . }}
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ template "erish.encoder.pvc" . }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ template "erish.encoder.sc" . }}
+  resources:
+    requests:
+      storage: {{ .Values.encoder.storage.capacity }}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: {{ template "erish.encoder.pv" . }}
+spec:
+  volumeMode: Filesystem
+  capacity:
+    storage: {{ .Values.encoder.storage.capacity }}
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  local:
+    path: {{ .Values.encoder.storage.path }}
+  storageClassName: {{ template "erish.encoder.sc" . }}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        {{- toYaml .Values.encoder.storage.nodeSelectorTerms | nindent 8 }}

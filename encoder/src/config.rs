@@ -62,15 +62,22 @@ impl From<Timezone> for chrono::FixedOffset {
     }
 }
 
+const fn slave() -> bool {
+    false
+}
+
 #[derive(Deserialize)]
 pub struct Config {
     pub path: String,
     pub auth: Option<Auth>,
     pub channels: Vec<Channel>,
-    #[serde(default = "Ffmpeg::default")]
+    #[serde(rename = "post_process", default = "Ffmpeg::default")]
     pub ffmpeg: Ffmpeg,
     #[serde(default = "Timezone::default")]
     pub timezone: Timezone,
+    #[serde(default = "slave")]
+    pub slave: bool,
+    pub master_url: Option<String>,
 }
 
 impl Config {
@@ -112,6 +119,8 @@ impl Config {
                 minutes: env_opt("TZ_MINUTES").unwrap_or(0),
                 seconds: env_opt("TZ_SECONDS").unwrap_or(0),
             },
+            slave: env_opt("SLAVE").unwrap_or(false),
+            master_url: env_opt("MASTER_URL"),
         })
     }
 }

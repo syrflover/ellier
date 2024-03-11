@@ -1,0 +1,92 @@
+{{- $outer := . }}
+{{- range $channel := .Values.config.chzzk.channels }}
+{{- with $outer }}
+{{- if $channel.enable }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ template "erish.encoder" . }}-{{ $channel.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "erish.labels" . | nindent 4 }}
+    component: encoder
+spec:
+  updateStrategy:
+    type: OnDelete
+    rollingUpdate: null
+  selector:
+    matchLabels:
+      {{- include "erish.selectorLabels" . | nindent 6 }}
+      component: encoder
+  serviceName: {{ template "erish.encoder" . }}
+  replicas: 1
+  template:
+    metadata:
+      {{- with .Values.encoder.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "erish.labels" . | nindent 8 }}
+        {{- with .Values.server.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        component: encoder
+    spec:
+      serviceAccountName: {{ include "erish.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml $.Values.encoder.podSecurityContext | nindent 8 }}
+      containers:
+        - name: {{ template "erish.encoder" . }}
+          securityContext:
+            {{- toYaml .Values.encoder.securityContext | nindent 12 }}
+          image: "{{ .Values.encoder.image.repository }}:{{ .Values.encoder.image.tag }}"
+          imagePullPolicy: {{ .Values.encoder.image.pullPolicy }}
+          resources:
+            {{- toYaml .Values.encoder.resources | nindent 12 }}
+          env:
+            - name: TZ_HOURS
+              value: {{ .Values.config.timezone.hours | quote }}
+            - name: TZ_MINUTES
+              value: {{ .Values.config.timezone.minutes | quote }}
+            - name: TZ_SECONDS
+              value: {{ .Values.config.timezone.seconds | quote }}
+            - name: CHANNEL_ID
+              value: {{ $channel.id }}
+            - name: CHANNEL_NAME
+              value: {{ $channel.name }}
+            - name: ELLIER_PATH
+              value: /erish-data
+            - name: SLAVE
+              value: "true"
+            - name: MASTER_URL
+              value: http://{{ template "erish.server" . }}:3000
+
+            - name: ENABLE_POST_PROCESSING
+              value: {{ .Values.config.post_process.enable | quote }}
+            - name: VIDEO_CODEC
+              value: {{ .Values.config.post_process.video_codec }}
+            - name: AUDIO_CODEC
+              value: {{ .Values.config.post_process.audio_codec }}
+          volumeMounts:
+            - name: data
+              mountPath: /erish-data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ template "erish.encoder.pvc" . }}
+      {{- with .Values.encoder.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.encoder.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.encoder.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

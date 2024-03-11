@@ -66,3 +66,10 @@ cargo build --release
 - `--name=<string>`
 
 `channels.json` 파일에 있는 채널 중 한 개의 채널을 지정함.
+
+## 플랜
+
+- 동영상 메타데이터 삽입하기
+- 릴리즈 자동화 (바이너리 및 도커 이미지)
+- gui
+- 알림 서비스 (discord?)

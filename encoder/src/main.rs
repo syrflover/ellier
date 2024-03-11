@@ -8,10 +8,10 @@ use std::{
 use chrono::{DateTime, FixedOffset, Utc};
 use chzzk::{
     live::{get_live_detail::GetLiveDetail, get_live_status::GetLiveStatus},
-    model::{Live, LiveDetail, LivePlaybackMedia, LiveStatus, LiveStatusType, PartialChannel},
+    model::{Live, LiveDetail, LivePlaybackMedia, LiveStatus, LiveStatusType},
     request::Auth,
 };
-use ellier::{
+use encoder::{
     config::{Channel, Config, Timezone},
     ffmpeg::{AudioCodec, Ffmpeg, VideoCodec},
     time::Time,
@@ -80,14 +80,14 @@ impl<'a> EncodeStream<'a> {
             if post_process {
                 streamlink
                     .arg("--stdout")
-                    .stdin(Stdio::inherit())
+                    .stdin(Stdio::null())
                     .stderr(Stdio::inherit())
                     .stdout(Stdio::piped());
             } else {
                 streamlink
                     .arg("-o")
                     .arg(save_file_path.as_os_str())
-                    .stdin(Stdio::inherit())
+                    .stdin(Stdio::null())
                     .stderr(Stdio::inherit())
                     .stdout(Stdio::null());
             }
@@ -137,7 +137,7 @@ pub struct GetStream<'a> {
 }
 
 impl<'a> GetStream<'a> {
-    pub async fn execute(self) -> ellier::Result<Option<(LiveDetail, LivePlaybackMedia)>> {
+    pub async fn execute(self) -> encoder::Result<Option<(LiveDetail, LivePlaybackMedia)>> {
         let Self { auth, channel_id } = self;
 
         let live_status = GetLiveStatus { channel_id }.send(auth).await?;
@@ -176,7 +176,7 @@ pub struct WatchStream<'a> {
 }
 
 impl<'a> WatchStream<'a> {
-    pub async fn execute(self) -> ellier::Result<Option<(LiveDetail, Encoder)>> {
+    pub async fn execute(self) -> encoder::Result<Option<(LiveDetail, Encoder)>> {
         let Self {
             auth,
             save_directory,
@@ -217,12 +217,12 @@ async fn save_metadata<T: Serialize>(
     live: &T,
     started_at: &DateTime<FixedOffset>,
     time: &Time,
-) -> ellier::Result<()> {
+) -> encoder::Result<()> {
     let save_path = save_dir
         .as_ref()
         .join(started_at.format("%Y-%m-%d_%H-%M-%S").to_string());
 
-    let json = serde_json::to_vec(&live).map_err(ellier::Error::SerializeJson)?;
+    let json = serde_json::to_vec(&live).map_err(encoder::Error::SerializeJson)?;
 
     fs::write(
         save_path.join(format!("{}.json", time.to_readable("-"))),
@@ -243,6 +243,15 @@ fn get_ffmpeg_binary() -> String {
     String::from_utf8(buf).unwrap()
 }
 
+async fn get_chzzk_auth(http: &reqwest::Client, master_url: &str) -> Option<Auth> {
+    if let Ok(resp) = http.get(format!("{}/chzzk-auth", master_url)).send().await {
+        if resp.status().is_success() {
+            return resp.json::<Auth>().await.ok();
+        }
+    }
+    None
+}
+
 async fn run() {
     #[cfg(debug_assertions)]
     {
@@ -259,15 +268,38 @@ async fn run() {
 
     let Config {
         path,
-        auth,
+        mut auth,
         channels,
         mut ffmpeg,
         timezone,
+        slave,
+        master_url,
     } = if index.is_some() || name.is_some() {
         Config::from_file().unwrap()
     } else {
         Config::from_env().unwrap()
-    };
+    }
+    .tap(|config| {
+        println!("save_directory = {:?}", config.path);
+        println!("post_process.enable = {:#?}", config.ffmpeg.post_process);
+        println!(
+            "post_process.video_codec = {:#?}",
+            config.ffmpeg.video_codec
+        );
+        println!(
+            "post_process.audio_codec = {:#?}",
+            config.ffmpeg.audio_codec
+        );
+    });
+
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_millis(30))
+        .build()
+        .unwrap();
+
+    if slave {
+        auth = get_chzzk_auth(&http, master_url.as_deref().unwrap()).await;
+    }
 
     let Channel {
         channel_id,
@@ -283,25 +315,17 @@ async fn run() {
         channels.into_iter().next().expect("please set channel")
     };
 
-    let LiveDetail {
-        inherit:
-            Live {
-                channel:
-                    PartialChannel {
-                        channel_name: display_channel_name,
-                        ..
-                    },
-                ..
-            },
-        ..
-    } = (GetLiveDetail {
+    let display_channel_name = (GetLiveDetail {
         channel_id: &channel_id,
     })
     .send(&auth)
     .await
-    .unwrap();
+    .unwrap()
+    .inherit
+    .channel
+    .channel_name;
 
-    println!("channel_id   = {:?}", channel_id);
+    println!("channel_id = {:?}", channel_id);
     println!(
         "channel_name = {:?} / {:?}",
         channel_name, display_channel_name
@@ -319,6 +343,10 @@ async fn run() {
     let mut prev_live = None::<LiveStatus>;
 
     loop {
+        if slave {
+            auth = get_chzzk_auth(&http, master_url.as_deref().unwrap()).await;
+        }
+
         match encoder.as_mut() {
             Some(Encoder {
                 streamlink,
@@ -490,6 +518,8 @@ async fn run() {
                     let time = Time::from(time.elapsed());
                     println!("{} - received stop signal", time.to_readable(":"));
                     // print_metadata(path, &started_at).await;
+
+                    streamlink.kill().expect("failed to kill streamlink");
 
                     streamlink.wait().ok();
                     if let Some(ffmpeg) = ffmpeg.as_mut() {
