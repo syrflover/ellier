@@ -45,7 +45,7 @@ if [ $? -ne 0 ]; then
     exit $?
 fi
 
-rm -rf `ls -a | grep -v . | grep -v .. | grep -v .git | grep -v .gitignore | grep -v dist`
+rm -rf `ls -a | grep -v .git | grep -v .gitignore | grep -v dist`
 
 if [ $? -ne 0 ]; then
     exit $?
@@ -66,6 +66,9 @@ fi
 git push
 
 if [ $? -ne 0 ]; then
+    git reset HEAD
+
+    git checkout .
     exit $?
 fi
 
@@ -74,13 +77,5 @@ git checkout master
 if [ $? -ne 0 ]; then
     exit $?
 fi
-
-git reset HEAD
-
-if [ $? -ne 0 ]; then
-    exit $?
-fi
-
-git checkout .
 
 rm -rf dist
