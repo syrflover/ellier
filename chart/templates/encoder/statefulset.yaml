@@ -74,7 +74,11 @@ spec:
       volumes:
         - name: data
           persistentVolumeClaim:
+            {{- if .Values.encoder.storage.claimName }}
+            claimName: {{ .Values.encoder.storage.claimName }}
+            {{- else }}
             claimName: {{ template "erish.encoder.pvc" . }}
+            {{- end }}
       {{- with .Values.encoder.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -1,8 +1,10 @@
 {{- /**/ -}}
+{{- if not .Values.encoder.storage.claimName }}
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
   name: {{ template "erish.encoder.sc" . }}
+  namespace: {{ .Release.Namespace }}
 provisioner: kubernetes.io/no-provisioner
 volumeBindingMode: WaitForFirstConsumer
 ---
@@ -10,6 +12,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: {{ template "erish.encoder.pvc" . }}
+  namespace: {{ .Release.Namespace }}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -22,6 +25,7 @@ apiVersion: v1
 kind: PersistentVolume
 metadata:
   name: {{ template "erish.encoder.pv" . }}
+  namespace: {{ .Release.Namespace }}
 spec:
   volumeMode: Filesystem
   capacity:
@@ -36,3 +40,4 @@ spec:
     required:
       nodeSelectorTerms:
         {{- toYaml .Values.encoder.storage.nodeSelectorTerms | nindent 8 }}
+{{- end }}

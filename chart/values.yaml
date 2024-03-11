@@ -35,6 +35,8 @@ encoder:
       memory: 512Mi
 
   storage:
+    claimName: null
+
     path: /mnt/storage1
     capacity: 3.7T
     nodeSelectorTerms:
