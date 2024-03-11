@@ -29,13 +29,13 @@ if [ $? -ne 0 ]; then
     exit $?
 fi
 
-echo "create repo index"
+# echo "create repo index"
 
-helm repo index .
+# helm repo index .
 
-if [ $? -ne 0 ]; then
-    exit $?
-fi
+# if [ $? -ne 0 ]; then
+#     exit $?
+# fi
 
 echo "remove chart directory"
 
