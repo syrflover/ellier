@@ -2,6 +2,7 @@
 {{- range $channel := .Values.config.chzzk.channels }}
 {{- with $outer }}
 {{- if $channel.enable }}
+---
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
