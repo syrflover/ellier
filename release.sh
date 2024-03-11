@@ -75,10 +75,12 @@ if [ $? -ne 0 ]; then
     exit $?
 fi
 
-git reset HEAD^
+git reset HEAD
 
 if [ $? -ne 0 ]; then
     exit $?
 fi
 
 git checkout .
+
+rm -rf dist
