@@ -30,9 +30,9 @@ fi
 
 function build() {
     if [ "$BUILD_TARGET" ]; then
-        cargo build --release --target $BUILD_TARGET
+        cargo build --bin $ORIGINAL_BINARY_NAME --release --target $BUILD_TARGET
     else
-        cargo build --release
+        cargo build --bin $ORIGINAL_BINARY_NAME --release
     fi
 }
 
