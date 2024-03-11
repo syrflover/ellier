@@ -29,7 +29,7 @@ if [ $? -ne 0 ]; then
     exit $?
 fi
 
-echo "create repo index"
+echo "update repo index"
 
 mv index.yaml prev_index.yaml
 
@@ -37,17 +37,17 @@ if [ $? -ne 0 ]; then
     exit $?
 fi
 
-helm repo index . --merge prev_index.yaml
+helm repo index --merge prev_index.yaml .
 
 if [ $? -ne 0 ]; then
     exit $?
 fi
 
-rm -rf prev_index.yaml
+# rm -rf prev_index.yaml
 
-if [ $? -ne 0 ]; then
-    exit $?
-fi
+# if [ $? -ne 0 ]; then
+#     exit $?
+# fi
 
 echo "remove chart directory"
 
