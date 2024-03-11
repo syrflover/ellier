@@ -45,7 +45,7 @@ if [ $? -ne 0 ]; then
     exit $?
 fi
 
-rm -rf `ls | grep -v dist`
+rm -rf `ls -a | grep -v . | grep -v .. | grep -v .git | grep -v .gitignore | grep -v dist`
 
 if [ $? -ne 0 ]; then
     exit $?
