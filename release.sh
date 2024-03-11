@@ -29,13 +29,25 @@ if [ $? -ne 0 ]; then
     exit $?
 fi
 
-# echo "create repo index"
+echo "create repo index"
 
-# helm repo index .
+mv index.yaml prev_index.yaml
 
-# if [ $? -ne 0 ]; then
-#     exit $?
-# fi
+if [ $? -ne 0 ]; then
+    exit $?
+fi
+
+helm repo index . --merge prev_index.yaml
+
+if [ $? -ne 0 ]; then
+    exit $?
+fi
+
+rm -rf prev_index.yaml
+
+if [ $? -ne 0 ]; then
+    exit $?
+fi
 
 echo "remove chart directory"
 
