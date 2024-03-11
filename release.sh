@@ -5,33 +5,31 @@ if ! [ -z "$S" ]; then
     exit 1
 fi
 
+echo "change branch to gh-pages"
+
 git checkout gh-pages
 
 if [ $? -ne 0 ]; then
     exit $?
 fi
 
-if [ $? -ne 0 ]; then
-    exit $?
-fi
+echo "copy chart directory from master branch"
 
-mkdir -p dist
+git checkout master chart
 
 if [ $? -ne 0 ]; then
     exit $?
 fi
 
-cd dist
+echo "package chart"
+
+helm package chart
 
 if [ $? -ne 0 ]; then
     exit $?
 fi
 
-helm package ../chart
-
-if [ $? -ne 0 ]; then
-    exit $?
-fi
+echo "create repo index"
 
 helm repo index .
 
@@ -39,13 +37,10 @@ if [ $? -ne 0 ]; then
     exit $?
 fi
 
-cd ..
+echo "remove chart directory"
 
-if [ $? -ne 0 ]; then
-    exit $?
-fi
-
-rm -rf `ls -a | grep -v .git | grep -v .gitignore | grep -v dist`
+# rm -rf `ls -a | grep -v .git | grep -v .gitignore | grep -v dist`
+rm -rf chart
 
 if [ $? -ne 0 ]; then
     exit $?
@@ -57,25 +52,36 @@ fi
 #     exit $?
 # fi
 
+echo "add files to stage"
+
 git add .
 
 if [ $? -ne 0 ]; then
     exit $?
 fi
 
+echo "commit"
+
+git commit -m "release"
+
+if [ $? -ne 0 ]; then
+    exit $?
+fi
+
+echo "push"
+
 git push
 
 if [ $? -ne 0 ]; then
     git reset HEAD
-
     git checkout .
     exit $?
 fi
+
+echo "change branch to master"
 
 git checkout master
 
 if [ $? -ne 0 ]; then
     exit $?
 fi
-
-rm -rf dist
