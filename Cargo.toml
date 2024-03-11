@@ -1,3 +1,0 @@
-[workspace]
-members = ["encoder", "server"]
-resolver = "2"
