@@ -195,3 +195,25 @@ pub fn ffprobe(path: impl AsRef<Path>) -> crate::Result<Ffprobe> {
 
     Ok(json)
 }
+
+// pub fn get_duration(p: &Path) -> io::Result<Option<Duration>> {
+//     let o = Command::new("ffprobe")
+//         // .arg("-i")
+//         .arg(p)
+//         .args([
+//             "-show_entries",
+//             "format=duration",
+//             "-of",
+//             "csv=\"p=0\"",
+//             "-v",
+//             "quiet",
+//         ])
+//         .output()?;
+
+//     let duration = String::from_utf8(o.stdout)
+//         .ok()
+//         .and_then(|x| x.parse::<f64>().ok())
+//         .map(Duration::from_secs_f64);
+
+//     Ok(duration)
+// }

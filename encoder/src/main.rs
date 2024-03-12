@@ -128,28 +128,6 @@ impl AddMetadata {
     }
 }
 
-// fn get_duration(p: &Path) -> io::Result<Duration> {
-//     let o = Command::new("ffprobe")
-//         .arg("-i")
-//         .arg(p)
-//         .args([
-//             "-show_entries",
-//             "format=duration",
-//             "-v",
-//             "quiet",
-//             "-of",
-//             "csv=\"p=0\"",
-//         ])
-//         .output()?;
-
-//     let duration = String::from_utf8(o.stdout)
-//         .ok()
-//         .and_then(|x| x.parse::<f64>().ok())
-//         .unwrap_or(0.0);
-
-//     Ok(Duration::from_secs_f64(duration))
-// }
-
 #[derive(Clone, PartialEq, Eq)]
 pub struct Chapter(pub Time, pub LiveStatus);
 
@@ -582,6 +560,7 @@ async fn run() {
             }) => match streamlink.try_wait() {
                 Ok(Some(_exit_code)) => {
                     let time = Time::from(time.elapsed());
+
                     if let Some(ffmpeg) = ffmpeg.as_mut() {
                         ffmpeg.try_wait().ok();
                     }
@@ -719,47 +698,52 @@ async fn run() {
         }
 
         tokio::select! {
-            _ = sleep(Duration::from_secs(5)) => {}
-            _ = stop_signal(#[cfg(unix)] &mut sigterm, #[cfg(target_os = "windows")] &mut ctrl_c) => {
-                if let Some(Encoder {
-                    mut streamlink,
-                    mut ffmpeg,
-                    directory,
-                    started_at: _,
-                    chapters,
-                    time,
-                 }) = encoder.take() {
-                    let time = Time::from(time.elapsed());
-                    println!("{} - received stop signal", time.to_readable(":"));
-                    // print_metadata(path, &started_at).await;
+            _ = sleep(Duration::from_secs(5)) => {
+                continue;
+            }
+            _ = stop_signal(#[cfg(unix)] &mut sigterm, #[cfg(target_os = "windows")] &mut ctrl_c) => {}
+        }
 
-                    streamlink.kill().expect("failed to kill streamlink");
+        if let Some(Encoder {
+            mut streamlink,
+            mut ffmpeg,
+            directory,
+            started_at: _,
+            chapters,
+            time,
+        }) = encoder.take()
+        {
+            let time = Time::from(time.elapsed());
 
-                    streamlink.wait().ok();
-                    if let Some(ffmpeg) = ffmpeg.as_mut() {
-                        ffmpeg.try_wait().ok();
+            println!("{} - received stop signal", time.to_readable(":"));
+            // print_metadata(path, &started_at).await;
 
-                        let added_metadata = AddMetadata {
-                            directory: directory.clone(),
-                            chapters: chapters.clone(),
-                        }
-                        .execute()
-                        .await;
+            streamlink.kill().expect("failed to kill streamlink");
 
-                        match added_metadata {
-                            Ok(None) => {}
-                            Ok(Some(err)) => {
-                                eprintln!("{err}");
-                            }
-                            Err(err) => {
-                                eprintln!("{err}");
-                            }
-                        }
+            streamlink.wait().ok();
+
+            if let Some(ffmpeg) = ffmpeg.as_mut() {
+                ffmpeg.try_wait().ok();
+
+                let added_metadata = AddMetadata {
+                    directory: directory.clone(),
+                    chapters: chapters.clone(),
+                }
+                .execute()
+                .await;
+
+                match added_metadata {
+                    Ok(None) => {}
+                    Ok(Some(err)) => {
+                        eprintln!("{err}");
+                    }
+                    Err(err) => {
+                        eprintln!("{err}");
                     }
                 }
-                return;
             }
         }
+        return;
     }
 }
 
