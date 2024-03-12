@@ -14,25 +14,176 @@ use chzzk::{
 use encoder::{
     config::{Channel, Config, Timezone},
     ffmpeg::{AudioCodec, Ffmpeg, VideoCodec},
-    time::Time,
+    time::{make_to_least_two_chars, Time},
 };
-use serde::Serialize;
 use tap::Tap;
 use tokio::{fs, signal, time::sleep};
 
+pub struct AddMetadata {
+    /// <channel>/<date>
+    directory: PathBuf,
+    chapters: Vec<Chapter>,
+}
+
+pub struct Metadata(pub String, u64);
+
+impl Metadata {
+    pub fn new() -> Self {
+        Self(String::new(), 1)
+    }
+
+    pub fn add_chapter(&mut self, title: &str, start: Time) {
+        /* CHAPTER01=00:00:00.000
+        CHAPTER01NAME=Intro
+        CHAPTER02=00:02:30.000
+        CHAPTER02NAME=Baby prepares to rock
+        CHAPTER03=00:02:42.300
+        CHAPTER03NAME=Baby rocks the house */
+
+        let index = make_to_least_two_chars(self.1);
+
+        self.0.push_str("CHAPTER");
+        self.0.push_str(&index);
+        self.0.push('=');
+        self.0.push_str(&start.to_readable(":"));
+        self.0.push_str(".000\n");
+
+        self.0.push_str("CHAPTER");
+        self.0.push_str(&index);
+        self.0.push_str("NAME=");
+        self.0.push_str(title);
+        self.0.push('\n');
+
+        self.1 += 1;
+    }
+}
+
+impl AddMetadata {
+    /// returns stdout if error
+    pub async fn execute(self) -> io::Result<Option<String>> {
+        // 기존 방식 마이그레이션
+        // 1. read dir
+        // 2. 00-00-00.json 형태의 파일만 필터링
+        // 3. AddMetadata {}.execute()
+
+        // https://mkvtoolnix.download/doc/mkvmerge.html#mkvmerge.chapters
+
+        let Self {
+            directory,
+            mut chapters,
+        } = self;
+
+        chapters.sort_by_key(|chapter| chapter.0.as_secs());
+
+        let mut metadata = Metadata::new();
+        let mut chapters = chapters.into_iter();
+        let mut prev_chapter = None::<Chapter>;
+
+        while let Some(chapter) = chapters.next() {
+            let start = prev_chapter
+                .as_ref()
+                .map(|chapter| chapter.0)
+                .unwrap_or_default();
+
+            metadata.add_chapter(
+                &format!(
+                    "{} Playing {}",
+                    chapter.1.live_title,
+                    chapter
+                        .1
+                        .live_category
+                        .as_deref()
+                        .unwrap_or("unknown")
+                        .replace("_", " ")
+                ),
+                start,
+            );
+
+            prev_chapter.replace(chapter);
+        }
+
+        let metadata_file = directory.join("metadata.txt");
+
+        fs::write(&metadata_file, metadata.0).await?;
+
+        let mut mkvpropedit = Command::new("mkvpropedit");
+
+        mkvpropedit
+            .arg(directory.join("index.mkv"))
+            // .args(["--edit", "info", "--set", &format!("title={}", live_title)])
+            .args(["--edit", "track:a1", "--set", "language=ko"])
+            .arg("--chapters")
+            .arg(&metadata_file);
+
+        let res = mkvpropedit.output()?;
+
+        fs::remove_file(&metadata_file).await.ok();
+
+        if res.status.success() {
+            Ok(None)
+        } else {
+            let err = String::from_utf8(res.stdout).unwrap_or("unknown error".to_owned());
+            Ok(Some(err))
+        }
+    }
+}
+
+// fn get_duration(p: &Path) -> io::Result<Duration> {
+//     let o = Command::new("ffprobe")
+//         .arg("-i")
+//         .arg(p)
+//         .args([
+//             "-show_entries",
+//             "format=duration",
+//             "-v",
+//             "quiet",
+//             "-of",
+//             "csv=\"p=0\"",
+//         ])
+//         .output()?;
+
+//     let duration = String::from_utf8(o.stdout)
+//         .ok()
+//         .and_then(|x| x.parse::<f64>().ok())
+//         .unwrap_or(0.0);
+
+//     Ok(Duration::from_secs_f64(duration))
+// }
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct Chapter(pub Time, pub LiveStatus);
+
+impl PartialOrd for Chapter {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0.as_secs().partial_cmp(&other.0.as_secs())
+    }
+}
+
+impl Ord for Chapter {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.as_secs().cmp(&other.0.as_secs())
+    }
+}
+
 pub struct Encoder {
-    // process: Child,
     streamlink: Child,
     ffmpeg: Option<Child>,
+    /// <channel>
     directory: PathBuf,
+    #[allow(dead_code)]
     started_at: DateTime<FixedOffset>,
     time: Instant,
+
+    chapters: Vec<Chapter>,
 }
 
 pub struct EncodeStream<'a> {
     stream_url: &'a str,
     save_directory: &'a Path,
     timezone: Timezone,
+
+    title: &'a str,
+    artist: &'a str,
 
     ffmpeg_binary: &'a str,
 
@@ -47,6 +198,8 @@ impl<'a> EncodeStream<'a> {
             stream_url,
             save_directory,
             timezone,
+            title,
+            artist,
             post_process,
             ffmpeg_binary,
             video_codec,
@@ -98,6 +251,20 @@ impl<'a> EncodeStream<'a> {
         };
 
         let ffmpeg = if post_process {
+            fn escape_special_chars(s: &str) -> String {
+                // (‘=’, ‘;’, ‘#’, ‘\’ and a newline) must be escaped with a backslash ‘\’.
+
+                [
+                    ('=', "\\="),
+                    (';', "\\;"),
+                    ('#', "\\#"),
+                    ('\\', "\\\\"),
+                    ('\n', " "),
+                ]
+                .into_iter()
+                .fold(s.to_owned(), |s, (a, b)| s.replace(a, b))
+            }
+
             Some(
                 Command::new("ffmpeg")
                     .args([
@@ -111,6 +278,12 @@ impl<'a> EncodeStream<'a> {
                         video_codec.as_str(),
                         "-c:a",
                         audio_codec.as_str(),
+                        "-map_metadata",
+                        "0",
+                        "-metadata",
+                        &format!("title=\"{}\"", escape_special_chars(&title)),
+                        "-metadata",
+                        &format!("artist=\"{}\"", escape_special_chars(&artist)),
                     ])
                     .arg(save_file_path.as_os_str())
                     .stdin(streamlink.stdout.take().unwrap())
@@ -129,6 +302,7 @@ impl<'a> EncodeStream<'a> {
             directory: save_directory,
             started_at,
             time: Instant::now(),
+            chapters: Vec::new(),
         })
     }
 }
@@ -203,6 +377,8 @@ impl<'a> WatchStream<'a> {
             stream_url: &stream.path,
             save_directory,
             timezone,
+            title: &live_detail.inherit.live_title,
+            artist: &live_detail.inherit.channel.channel_name,
             post_process: *post_process,
             ffmpeg_binary,
             video_codec: *video_codec,
@@ -214,26 +390,26 @@ impl<'a> WatchStream<'a> {
     }
 }
 
-async fn save_metadata<T: Serialize>(
-    save_dir: impl AsRef<Path>,
-    live: &T,
-    started_at: &DateTime<FixedOffset>,
-    time: &Time,
-) -> encoder::Result<()> {
-    let save_path = save_dir
-        .as_ref()
-        .join(started_at.format("%Y-%m-%d_%H-%M-%S").to_string());
+// async fn save_metadata<T: Serialize>(
+//     save_dir: impl AsRef<Path>,
+//     live: &T,
+//     started_at: &DateTime<FixedOffset>,
+//     time: &Time,
+// ) -> encoder::Result<()> {
+//     let save_path = save_dir
+//         .as_ref()
+//         .join(started_at.format("%Y-%m-%d_%H-%M-%S").to_string());
 
-    let json = serde_json::to_vec(&live).map_err(encoder::Error::SerializeJson)?;
+//     let json = serde_json::to_vec(&live).map_err(encoder::Error::SerializeJson)?;
 
-    fs::write(
-        save_path.join(format!("{}.json", time.to_readable("-"))),
-        json,
-    )
-    .await?;
+//     fs::write(
+//         save_path.join(format!("{}.json", time.to_readable("-"))),
+//         json,
+//     )
+//     .await?;
 
-    Ok(())
-}
+//     Ok(())
+// }
 
 fn get_ffmpeg_binary() -> String {
     let buf = Command::new("which")
@@ -252,6 +428,52 @@ async fn get_chzzk_auth(http: &reqwest::Client, master_url: &str) -> Option<Auth
         }
     }
     None
+}
+
+/// return: is modified chapter
+fn modify_or_push_chapter(chapters: &mut Vec<Chapter>, curr: Chapter) -> bool {
+    if curr.1.status == LiveStatusType::Close {
+        return false;
+    }
+
+    let prev = match chapters.last().cloned() {
+        Some(prev) => prev,
+        None => {
+            chapters.push(curr);
+            return true;
+        }
+    };
+
+    // 1분내에 이전에 사용했던 타이틀이 있으면 거르기.
+    // 단, 카테고리가 바뀌었다면 이전 챕터의 카테고리를 최신 챕터의 카테고리로 수정하면됨
+    // 1분이라는 기준은 나중에 문제되는 거 같으면 늘릴 수 있음
+    let oldest_chapter_before_60s_with_same_title = chapters
+        .iter_mut()
+        .filter(|prev| curr.0.as_secs() - prev.0.as_secs() <= 60)
+        .filter(|prev| prev.1.live_title == curr.1.live_title)
+        .min_by_key(|chapter| chapter.0.as_secs());
+
+    if let Some(prev) = oldest_chapter_before_60s_with_same_title {
+        if prev.1.live_category != curr.1.live_category {
+            prev.1.live_category = curr.1.live_category;
+            return true;
+        }
+        return false;
+    }
+
+    let modified = [
+        prev.1.live_title != curr.1.live_title,
+        prev.1.live_category != curr.1.live_category,
+    ]
+    .into_iter()
+    .any(|ne| ne);
+
+    if modified {
+        chapters.push(curr);
+        return true;
+    }
+
+    false
 }
 
 async fn run() {
@@ -342,7 +564,7 @@ async fn run() {
 
     let save_directory = PathBuf::from(&path).join(channel_name);
     let mut encoder = None::<Encoder>;
-    let mut prev_live = None::<LiveStatus>;
+    // let mut prev_live = None::<LiveStatus>;
 
     loop {
         if slave {
@@ -354,8 +576,9 @@ async fn run() {
                 streamlink,
                 ffmpeg,
                 directory,
-                started_at,
+                started_at: _,
                 time,
+                chapters,
             }) => match streamlink.try_wait() {
                 Ok(Some(_exit_code)) => {
                     let time = Time::from(time.elapsed());
@@ -364,13 +587,30 @@ async fn run() {
                     }
                     // print_metadata(path, &started_at).await;
 
-                    if time.as_secs() >= 10 {
-                        println!("{} - closed live stream", time.to_readable(":"));
+                    if time.as_secs() >= 15 {
+                        let added_metadata = AddMetadata {
+                            directory: directory.clone(),
+                            chapters: chapters.clone(),
+                        }
+                        .execute()
+                        .await;
+
+                        match added_metadata {
+                            Ok(None) => {
+                                println!("{} - closed live stream", time.to_readable(":"));
+                            }
+                            Ok(Some(err)) => {
+                                eprintln!("{err}");
+                            }
+                            Err(err) => {
+                                eprintln!("{err}");
+                            }
+                        }
                     } else {
                         match fs::remove_dir_all(directory).await {
                             Ok(_) => {
                                 println!(
-                                    "{} - removed this live stream, because duration less than 10 secs",
+                                    "{} - removed this live stream, because duration less than 15 secs",
                                     time.to_readable(":")
                                 );
                             }
@@ -379,7 +619,7 @@ async fn run() {
                     }
 
                     encoder = None;
-                    prev_live = None;
+                    // prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
                 Err(err) => {
@@ -388,38 +628,12 @@ async fn run() {
                     }
                     // print_metadata(path, &started_at).await;
                     eprintln!("{err}");
+
                     encoder = None;
-                    prev_live = None;
+                    // prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
                 Ok(None) => {
-                    fn is_modified(prev: Option<&LiveStatus>, curr: &LiveStatus) -> bool {
-                        let Some((prev, curr)) = prev.zip(Some(curr)) else {
-                            return false;
-                        };
-
-                        let modified_category = [
-                            // prev.category_type != curr.category_type,
-                            prev.live_category != curr.live_category,
-                            prev.live_category_value != curr.live_category_value,
-                        ]
-                        .into_iter()
-                        .all(|ne| ne);
-
-                        [
-                            prev.live_title != curr.live_title,
-                            // prev.status != curr.status,
-                            // prev.paid_promotion != curr.paid_promotion,
-                            prev.adult != curr.adult,
-                            modified_category,
-                            // prev.chat_active != curr.chat_active,
-                            // prev.chat_available_group != curr.chat_available_group,
-                            // prev.chat_available_condition != curr.chat_available_condition,
-                        ]
-                        .into_iter()
-                        .any(|ne| ne)
-                    }
-
                     let curr = GetLiveStatus {
                         channel_id: &channel_id,
                     }
@@ -427,27 +641,22 @@ async fn run() {
                     .await;
                     let time = Time::from(time.elapsed());
 
-                    match curr {
-                        Ok(curr) if is_modified(prev_live.as_ref(), &curr) => {
-                            match save_metadata(&save_directory, &curr, started_at, &time).await {
-                                Ok(_) => {
-                                    println!(
-                                        "{} - {:?} Playing {} | ",
-                                        time.to_readable(":"),
-                                        curr.live_title,
-                                        curr.live_category.as_deref().unwrap_or("unknown")
-                                    );
-                                    prev_live.replace(curr);
-                                }
-                                Err(err) => {
-                                    eprintln!("{err}");
-                                }
+                    match curr.map(|x| Chapter(time, x)) {
+                        Ok(curr) => {
+                            let modified = modify_or_push_chapter(chapters, curr.clone());
+
+                            if modified {
+                                println!(
+                                    "{} - {:?} Playing {}",
+                                    time.to_readable(":"),
+                                    curr.1.live_title,
+                                    curr.1.live_category.as_deref().unwrap_or("unknown")
+                                );
                             }
                         }
                         Err(err) => {
                             eprintln!("{err}");
                         }
-                        _ => {}
                     }
 
                     // print_metadata(&path, started_at).await;
@@ -476,7 +685,7 @@ async fn run() {
 
                 let time = Time(0, 0, 0);
 
-                if let Some((live_detail, encoder)) = live_detail.zip(encoder.as_ref()) {
+                if let Some((live_detail, encoder)) = live_detail.zip(encoder.as_mut()) {
                     let LiveDetail {
                         inherit:
                             Live {
@@ -487,22 +696,24 @@ async fn run() {
                         ..
                     } = &live_detail;
 
-                    match save_metadata(&save_directory, &live_detail, &encoder.started_at, &time)
-                        .await
-                    {
-                        Ok(_) => {
-                            println!(
-                                "{} - {:?} Playing {}",
-                                time.to_readable(":"),
-                                live_title,
-                                live_category.as_deref().unwrap_or("unknown")
-                            );
-                            prev_live.replace(live_detail.into());
-                        }
-                        Err(err) => {
-                            eprintln!("{err}");
-                        }
-                    }
+                    println!(
+                        "{} - {:?} Playing {}",
+                        time.to_readable(":"),
+                        live_title,
+                        live_category.as_deref().unwrap_or("unknown")
+                    );
+                    encoder.chapters.push(Chapter(time, live_detail.into()));
+
+                    // match save_metadata(&save_directory, &live_detail, &encoder.started_at, &time)
+                    //     .await
+                    // {
+                    //     Ok(_) => {
+
+                    //     }
+                    //     Err(err) => {
+                    //         eprintln!("{err}");
+                    //     }
+                    // }
                 }
             }
         }
@@ -513,9 +724,10 @@ async fn run() {
                 if let Some(Encoder {
                     mut streamlink,
                     mut ffmpeg,
-                    directory: _,
+                    directory,
                     started_at: _,
-                    time
+                    chapters,
+                    time,
                  }) = encoder.take() {
                     let time = Time::from(time.elapsed());
                     println!("{} - received stop signal", time.to_readable(":"));
@@ -526,6 +738,23 @@ async fn run() {
                     streamlink.wait().ok();
                     if let Some(ffmpeg) = ffmpeg.as_mut() {
                         ffmpeg.try_wait().ok();
+
+                        let added_metadata = AddMetadata {
+                            directory: directory.clone(),
+                            chapters: chapters.clone(),
+                        }
+                        .execute()
+                        .await;
+
+                        match added_metadata {
+                            Ok(None) => {}
+                            Ok(Some(err)) => {
+                                eprintln!("{err}");
+                            }
+                            Err(err) => {
+                                eprintln!("{err}");
+                            }
+                        }
                     }
                 }
                 return;

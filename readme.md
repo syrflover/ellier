@@ -4,9 +4,10 @@
 
 ## 테스트 환경
 
-- macos 14.2.1
+- alpine 3
 - ffmpeg 6.1.1
 - streamlink 6.6.2
+- mkvtoolnix 82.0
 
 ## 설정
 
@@ -69,7 +70,6 @@ cargo build --release
 
 ## 플랜
 
-- 동영상 메타데이터 삽입하기
 - 릴리즈 자동화 (바이너리 및 도커 이미지)
 - gui
 - 알림 서비스 (discord?)
