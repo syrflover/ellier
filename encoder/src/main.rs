@@ -14,7 +14,7 @@ use chzzk::{
 use encoder::{
     config::{Channel, Config, Timezone},
     ffmpeg::{AudioCodec, Ffmpeg, VideoCodec},
-    time::{make_to_least_two_chars, Time},
+    time::Time,
 };
 use tap::Tap;
 use tokio::{fs, signal, time::sleep};
@@ -25,36 +25,71 @@ pub struct AddMetadata {
     chapters: Vec<Chapter>,
 }
 
-pub struct Metadata(pub String, u64);
+pub struct Chapters(pub String);
 
-impl Metadata {
+impl Chapters {
     pub fn new() -> Self {
-        Self(String::new(), 1)
+        let mut s = String::new();
+
+        s.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
+        s.push_str(r#"<!DOCTYPE Chapters SYSTEM "matroskachapters.dtd">"#);
+        s.push_str("<Chapters><EditionEntry>");
+
+        Self(s)
+    }
+
+    pub fn build(mut self) -> String {
+        self.0.push_str("</EditionEntry></Chapters>");
+
+        self.0
     }
 
     pub fn add_chapter(&mut self, title: &str, start: Time) {
-        /* CHAPTER01=00:00:00.000
-        CHAPTER01NAME=Intro
-        CHAPTER02=00:02:30.000
-        CHAPTER02NAME=Baby prepares to rock
-        CHAPTER03=00:02:42.300
-        CHAPTER03NAME=Baby rocks the house */
+        /* <?xml version="1.0" encoding="ISO-8859-1"?>
+        <!DOCTYPE Chapters SYSTEM "matroskachapters.dtd">
+        <Chapters>
+          <EditionEntry>
+            <ChapterAtom>
+              <ChapterTimeStart>00:00:30.000</ChapterTimeStart>
+              <ChapterTimeEnd>00:01:20.000</ChapterTimeEnd>
+              <ChapterDisplay>
+                <ChapterString>A short chapter</ChapterString>
+                <ChapterLanguage>eng</ChapterLanguage>
+              </ChapterDisplay>
+            </ChapterAtom>
+            <ChapterAtom>
+                <ChapterTimeStart>00:00:46.000</ChapterTimeStart>
+                <ChapterTimeEnd>00:01:10.000</ChapterTimeEnd>
+                <ChapterDisplay>
+                  <ChapterString>A part of that short chapter</ChapterString>
+                  <ChapterLanguage>eng</ChapterLanguage>
+                </ChapterDisplay>
+              </ChapterAtom>
+          </EditionEntry>
+        </Chapters> */
 
-        let index = make_to_least_two_chars(self.1);
+        self.0.push_str("<ChapterAtom>");
 
-        self.0.push_str("CHAPTER");
-        self.0.push_str(&index);
-        self.0.push('=');
+        self.0.push_str("<ChapterTimeStart>");
         self.0.push_str(&start.to_readable(":"));
-        self.0.push_str(".000\n");
+        self.0.push_str(".000");
+        self.0.push_str("</ChapterTimeStart>");
 
-        self.0.push_str("CHAPTER");
-        self.0.push_str(&index);
-        self.0.push_str("NAME=");
+        // self.0.push_str("<ChapterTimeEnd>");
+        // self.0.push_str(&end.to_readable(":"));
+        // self.0.push_str(".000");
+        // self.0.push_str("</ChapterTimeEnd>");
+
+        self.0.push_str("<ChapterDisplay>");
+        self.0.push_str("<ChapterString>");
         self.0.push_str(title);
-        self.0.push('\n');
+        self.0.push_str("</ChapterString>");
+        self.0.push_str("<ChapterLanguage>");
+        self.0.push_str("ko");
+        self.0.push_str("</ChapterLanguage>");
+        self.0.push_str("</ChapterDisplay>");
 
-        self.1 += 1;
+        self.0.push_str("</ChapterAtom>");
     }
 }
 
@@ -75,7 +110,7 @@ impl AddMetadata {
 
         chapters.sort_by_key(|chapter| chapter.0.as_secs());
 
-        let mut metadata = Metadata::new();
+        let mut builder = Chapters::new();
         let mut chapters = chapters.into_iter();
         let mut prev_chapter = None::<Chapter>;
 
@@ -85,7 +120,7 @@ impl AddMetadata {
                 .map(|chapter| chapter.0)
                 .unwrap_or_default();
 
-            metadata.add_chapter(
+            builder.add_chapter(
                 &format!(
                     "{} Playing {}",
                     chapter.1.live_title,
@@ -102,9 +137,9 @@ impl AddMetadata {
             prev_chapter.replace(chapter);
         }
 
-        let metadata_file = directory.join("metadata.txt");
+        let metadata_file = directory.join("metadata.xml");
 
-        fs::write(&metadata_file, metadata.0).await?;
+        fs::write(&metadata_file, builder.build()).await?;
 
         let mut mkvpropedit = Command::new("mkvpropedit");
 
@@ -117,7 +152,7 @@ impl AddMetadata {
 
         let res = mkvpropedit.output()?;
 
-        fs::remove_file(&metadata_file).await.ok();
+        // fs::remove_file(&metadata_file).await.ok();
 
         if res.status.success() {
             Ok(None)
