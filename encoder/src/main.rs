@@ -101,6 +101,8 @@ impl<'a> EncodeStream<'a> {
             Some(
                 Command::new("ffmpeg")
                     .args([
+                        "-hide_banner",
+                        "-nostats",
                         "-loglevel",
                         "info",
                         "-i",
