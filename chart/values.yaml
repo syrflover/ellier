@@ -27,7 +27,7 @@ encoder:
   image:
     repository: syrlee/erish-encoder
     pullPolicy: IfNotPresent
-    tag: "0.2.0-alpha1"
+    tag: "0.2.0"
 
   resources:
     limits:
