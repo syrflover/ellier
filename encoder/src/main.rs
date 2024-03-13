@@ -424,27 +424,6 @@ impl<'a> WatchStream<'a> {
     }
 }
 
-// async fn save_metadata<T: Serialize>(
-//     save_dir: impl AsRef<Path>,
-//     live: &T,
-//     started_at: &DateTime<FixedOffset>,
-//     time: &Time,
-// ) -> encoder::Result<()> {
-//     let save_path = save_dir
-//         .as_ref()
-//         .join(started_at.format("%Y-%m-%d_%H-%M-%S").to_string());
-
-//     let json = serde_json::to_vec(&live).map_err(encoder::Error::SerializeJson)?;
-
-//     fs::write(
-//         save_path.join(format!("{}.json", time.to_readable("-"))),
-//         json,
-//     )
-//     .await?;
-
-//     Ok(())
-// }
-
 fn get_ffmpeg_binary() -> String {
     let buf = Command::new("which")
         .arg("ffmpeg")
@@ -465,7 +444,7 @@ async fn get_chzzk_auth(http: &reqwest::Client, master_url: &str) -> Option<Auth
 }
 
 /// return: is modified chapter
-fn modify_or_push_chapter(chapters: &mut Vec<Chapter>, curr: Chapter) -> bool {
+fn push_or_modify_chapter(chapters: &mut Vec<Chapter>, curr: Chapter) -> bool {
     if curr.1.status == LiveStatusType::Close {
         return false;
     }
@@ -620,7 +599,6 @@ async fn run() {
                     if let Some(ffmpeg) = ffmpeg.as_mut() {
                         ffmpeg.try_wait().ok();
                     }
-                    // print_metadata(path, &started_at).await;
 
                     if time.as_secs() >= 15 {
                         let added_metadata = AddMetadata {
@@ -654,18 +632,15 @@ async fn run() {
                     }
 
                     encoder = None;
-                    // prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
                 Err(err) => {
                     if let Some(ffmpeg) = ffmpeg.as_mut() {
                         ffmpeg.try_wait().ok();
                     }
-                    // print_metadata(path, &started_at).await;
                     eprintln!("{err}");
 
                     encoder = None;
-                    // prev_live = None;
                     continue; // 예상치 않은 종료가 발생할 수 있으므로 5초 기다리지 않음
                 }
                 Ok(None) => {
@@ -678,7 +653,7 @@ async fn run() {
 
                     match curr.map(|x| Chapter(time, x)) {
                         Ok(curr) => {
-                            let modified = modify_or_push_chapter(chapters, curr.clone());
+                            let modified = push_or_modify_chapter(chapters, curr.clone());
 
                             if modified {
                                 println!(
@@ -693,8 +668,6 @@ async fn run() {
                             eprintln!("{err}");
                         }
                     }
-
-                    // print_metadata(&path, started_at).await;
                 }
             },
             None => {
@@ -738,17 +711,6 @@ async fn run() {
                         live_category.as_deref().unwrap_or("unknown")
                     );
                     encoder.chapters.push(Chapter(time, live_detail.into()));
-
-                    // match save_metadata(&save_directory, &live_detail, &encoder.started_at, &time)
-                    //     .await
-                    // {
-                    //     Ok(_) => {
-
-                    //     }
-                    //     Err(err) => {
-                    //         eprintln!("{err}");
-                    //     }
-                    // }
                 }
             }
         }
@@ -772,7 +734,6 @@ async fn run() {
             let time = Time::from(time.elapsed());
 
             println!("{} - received stop signal", time.to_readable(":"));
-            // print_metadata(path, &started_at).await;
 
             streamlink.kill().expect("failed to kill streamlink");
 
@@ -802,49 +763,6 @@ async fn run() {
         return;
     }
 }
-
-// async fn print_metadata(path: impl AsRef<Path>, started_at: &SystemTime) {
-//     let Ok(elapsed) = started_at.elapsed() else {
-//         return;
-//     };
-
-//     let path = path.as_ref();
-
-//     let metadata = match fs::metadata(path).await {
-//         Ok(metadata) => metadata,
-//         Err(err) => {
-//             tracing::error!("{err}");
-//             return;
-//         }
-//     };
-
-//     let ffprobe = match ffprobe(path) {
-//         Ok(ffprobe) => ffprobe,
-//         Err(err) => {
-//             tracing::error!("{err}");
-//             return;
-//         }
-//     };
-
-//     let audio = ffprobe.streams.iter().find_map(|stream| stream.audio());
-//     let video = ffprobe.streams.iter().find_map(|stream| stream.video());
-
-//     if let Some((audio, video)) = audio.zip(video) {
-//         println!(
-//             "size = {}mb; vcodec = {}; fps = {}; res = {}x{}; acodec = {}; time = {}s",
-//             metadata.len() / 1024 / 1024,
-//             video.codec_name,
-//             video.avg_frame_rate,
-//             video.width,
-//             video.height,
-//             audio.codec_name,
-//             elapsed.as_secs(),
-//         );
-//     }
-// }
-
-// TODO: stream 끝나면 영상 메타데이터에 chapter 정보 넣기
-// - 특정 시간 안에 같은 제목 또는 카테고리는 스킵
 
 async fn stop_signal(
     #[cfg(unix)] sigterm: &mut signal::unix::Signal,
