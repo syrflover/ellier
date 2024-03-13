@@ -191,6 +191,7 @@ pub struct Encoder {
 }
 
 pub struct EncodeStream<'a> {
+    auth: Option<&'a Auth>,
     stream_url: &'a str,
     save_directory: &'a Path,
     timezone: Timezone,
@@ -208,6 +209,7 @@ pub struct EncodeStream<'a> {
 impl<'a> EncodeStream<'a> {
     pub fn execute(self) -> io::Result<Encoder> {
         let Self {
+            auth,
             stream_url,
             save_directory,
             timezone,
@@ -236,12 +238,30 @@ impl<'a> EncodeStream<'a> {
                 "best",
                 "--loglevel",
                 "info",
+                "--progress",
+                "no",
                 "--ffmpeg-ffmpeg",
                 ffmpeg_binary.trim(),
                 "--ffmpeg-copyts",
                 "--ffmpeg-fout",
                 "matroska",
             ]);
+
+            if let Some(Auth {
+                nid_ses,
+                nid_aut,
+                nid_jkl,
+            }) = auth
+            {
+                streamlink.args([
+                    "--http-cookie",
+                    &format!("NID_AUT={}", nid_aut),
+                    "--http-cookie",
+                    &format!("NID_SES={}", nid_ses),
+                    "--http-cookie",
+                    &format!("NID_JKL={}", nid_jkl),
+                ]);
+            }
 
             if post_process {
                 streamlink
@@ -387,6 +407,7 @@ impl<'a> WatchStream<'a> {
         fs::create_dir_all(&save_directory).await?;
 
         let encoder = EncodeStream {
+            auth,
             stream_url: &stream.path,
             save_directory,
             timezone,
