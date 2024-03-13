@@ -2,13 +2,6 @@
 
 윈도우 지원 안 함
 
-## 테스트 환경
-
-- alpine 3
-- ffmpeg 6.1.1
-- streamlink 6.6.2
-- mkvtoolnix 82.0
-
 ## 설정
 
 ```jsonc
