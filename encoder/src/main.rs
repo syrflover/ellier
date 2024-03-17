@@ -281,6 +281,7 @@ impl<'a> EncodeStream<'a> {
             streamlink
                 .tap(|cmd| println!("Streamlink{:#?}", cmd.get_args()))
                 .spawn()?
+                .tap(|streamlink| println!("streamlink.pid={}", streamlink.id()))
         };
 
         let ffmpeg = if post_process {
@@ -323,7 +324,8 @@ impl<'a> EncodeStream<'a> {
                     .stdout(Stdio::null())
                     .stderr(Stdio::inherit())
                     .tap(|cmd| println!("Ffmpeg{:#?}", cmd.get_args()))
-                    .spawn()?,
+                    .spawn()?
+                    .tap(|ffmpeg| println!("ffmpeg.pid={}", ffmpeg.id())),
             )
         } else {
             None
